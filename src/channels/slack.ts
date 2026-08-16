@@ -1,5 +1,6 @@
 import type { CommunicationProvider, IncomingMessage, MessageHandler, OutboundResponse } from "./types.js";
 import { UpdatingResponse } from "./updating-response.js";
+import { pairingCodeMatches, PairingStore } from "../pairing.js";
 
 interface SlackResponse {
   ok: boolean;
@@ -30,6 +31,8 @@ interface SlackEnvelope {
 export interface SlackOptions {
   botToken: string;
   appToken: string;
+  pairingCodeHash: string;
+  statePath: string;
   fetch?: typeof globalThis.fetch;
   webSocket?: typeof WebSocket;
 }
@@ -39,15 +42,18 @@ export class SlackProvider implements CommunicationProvider {
   readonly name = "slack";
   private readonly fetchFn: typeof globalThis.fetch;
   private readonly WebSocketClass: typeof WebSocket;
+  private readonly store: PairingStore;
   private botUserId = "";
 
   constructor(private readonly options: SlackOptions) {
     this.fetchFn = options.fetch ?? globalThis.fetch;
     this.WebSocketClass = options.webSocket ?? globalThis.WebSocket;
+    this.store = new PairingStore(options.statePath);
     if (!this.WebSocketClass) throw new Error("This Node.js runtime does not provide WebSocket support");
   }
 
   async start(handler: MessageHandler, signal: AbortSignal): Promise<void> {
+    await this.store.load();
     const auth = await this.call("auth.test", {}, this.options.botToken, signal);
     this.botUserId = auth.user_id ?? "";
 
@@ -69,26 +75,43 @@ export class SlackProvider implements CommunicationProvider {
   }
 
   async openResponse(message: IncomingMessage, signal: AbortSignal): Promise<OutboundResponse> {
-    let timestamp: string | undefined;
+    const timestamps: string[] = [];
+    const published: string[] = [];
     return new UpdatingResponse({
       // chat.update is generally limited to roughly one request per second per channel.
       minUpdateIntervalMs: 1_000,
       publish: async (text) => {
-        const rendered = slackText(text);
-        if (!timestamp) {
-          const sent = await this.call("chat.postMessage", {
+        const parts = splitSlackMessage(text);
+        for (let index = 0; index < parts.length; index += 1) {
+          const part = parts[index]!;
+          if (!timestamps[index]) {
+            const sent = await this.call("chat.postMessage", {
+              channel: message.conversationId,
+              text: part,
+              ...(message.threadId ? { thread_ts: message.threadId } : {}),
+            }, this.options.botToken, signal);
+            if (!sent.ts) throw new Error("Slack did not return a message timestamp");
+            timestamps[index] = sent.ts;
+            published[index] = part;
+          } else if (published[index] !== part) {
+            await this.call("chat.update", {
+              channel: message.conversationId,
+              ts: timestamps[index],
+              text: part,
+            }, this.options.botToken, signal);
+            published[index] = part;
+          }
+        }
+
+        // A failure can replace an already-streamed response with shorter text.
+        // Remove continuation messages which are no longer part of the snapshot.
+        for (let index = timestamps.length - 1; index >= parts.length; index -= 1) {
+          await this.call("chat.delete", {
             channel: message.conversationId,
-            text: rendered,
-            ...(message.threadId ? { thread_ts: message.threadId } : {}),
+            ts: timestamps[index],
           }, this.options.botToken, signal);
-          if (!sent.ts) throw new Error("Slack did not return a message timestamp");
-          timestamp = sent.ts;
-        } else {
-          await this.call("chat.update", {
-            channel: message.conversationId,
-            ts: timestamp,
-            text: rendered,
-          }, this.options.botToken, signal);
+          timestamps.pop();
+          published.pop();
         }
       },
     });
@@ -132,6 +155,23 @@ export class SlackProvider implements CommunicationProvider {
     const text = event.text.replaceAll(`<@${this.botUserId}>`, "").trim();
     if (!text) return;
 
+    if (!this.store.has(event.user)) {
+      // Pairing is intentionally DM-only so the one-time code is never exposed in a channel.
+      if (!isDirectMessage) return;
+      if (this.store.hasAny()) {
+        await this.send(event.channel, "This Pi is already paired with its owner.");
+        return;
+      }
+      const match = text.match(/^\/pair\s+(.+)$/i);
+      if (match?.[1] && pairingCodeMatches(match[1], this.options.pairingCodeHash)) {
+        await this.store.add(event.user);
+        await this.send(event.channel, "Paired. This Pi will now respond only to your Slack account.");
+      } else {
+        await this.send(event.channel, "This Pi is private. Send /pair followed by the code shown during deployment.");
+      }
+      return;
+    }
+
     await handler({
       provider: this.name,
       conversationId: event.channel,
@@ -163,10 +203,18 @@ export class SlackProvider implements CommunicationProvider {
   }
 }
 
-function slackText(text: string): string {
-  const limit = 39_000;
-  if (text.length <= limit) return text;
-  return `…${text.slice(-(limit - 1))}`;
+export function splitSlackMessage(text: string, limit = 39_000): string[] {
+  if (text.length <= limit) return [text];
+  const parts: string[] = [];
+  let remaining = text;
+  while (remaining.length > limit) {
+    let cut = remaining.lastIndexOf("\n", limit);
+    if (cut < Math.floor(limit / 2)) cut = limit;
+    parts.push(remaining.slice(0, cut));
+    remaining = remaining.slice(cut).replace(/^\n/, "");
+  }
+  if (remaining) parts.push(remaining);
+  return parts;
 }
 
 function sleep(ms: number, signal: AbortSignal): Promise<void> {

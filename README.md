@@ -2,7 +2,7 @@
 
 Deploy an always-running [Pi](https://pi.dev) to any SSH-accessible Linux server and communicate with it through Telegram or Slack. Users do not configure Node.js, npm, public ports, TLS, process supervisors, or webhooks.
 
-Responses stream in real time by creating one provider message and updating it as Pi emits text. Provider adapters own rate limiting and platform-specific rendering. Telegram also keeps its typing indicator active while Pi is working.
+Responses stream in real time by creating provider messages and updating them as Pi emits text. Long responses continue in additional messages instead of discarding earlier output. Provider adapters own rate limiting and platform-specific rendering. Telegram also keeps its typing indicator active while Pi is working.
 
 > Early development: review the installer before using it on a production server.
 
@@ -38,7 +38,7 @@ Subscribe to the `app_mention` and `message.im` bot events, install the app to t
 npx --yes pi-ship@latest deploy ubuntu@your-server --name my-pi --channel slack
 ```
 
-Enter the bot token (`xoxb-`) and app token (`xapp-`) when prompted. For automation, use `PI_SHIP_SLACK_BOT_TOKEN` and `PI_SHIP_SLACK_APP_TOKEN`. Pi replies to direct messages and to mentions in channels, using threads for channel conversations.
+Enter the bot token (`xoxb-`) and app token (`xapp-`) when prompted. For automation, use `PI_SHIP_SLACK_BOT_TOKEN` and `PI_SHIP_SLACK_APP_TOKEN`. Deployment prints a one-time pairing code. Send `/pair CODE` to the app in a **direct message**; the code is never accepted in a public channel. After pairing, only that Slack user can invoke Pi through direct messages or channel mentions. Channel replies use threads.
 
 ## Commands
 
@@ -60,7 +60,7 @@ If installed globally, the same commands are available as `pi-ship`.
 - Dedicated, unprivileged `pi-ship` user
 - Hardened systemd service
 - Credentials stored in a root-owned, group-readable file with mode `0640`
-- One-time Telegram pairing code and sender allowlist
+- One-time, DM-only pairing codes and sender allowlists for Telegram and Slack
 - Pinned Node.js download verified against the official checksum
 - Pi process automatically restarted after failure or reboot
 

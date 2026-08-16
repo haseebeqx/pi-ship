@@ -10,6 +10,8 @@ export interface ShipConfig {
   };
   slack?: {
     socketMode: true;
+    pairingCodeHash: string;
+    statePath: string;
   };
 }
 

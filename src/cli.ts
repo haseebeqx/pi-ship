@@ -63,7 +63,11 @@ async function deploy(args: string[]): Promise<void> {
     const botToken = process.env.PI_SHIP_SLACK_BOT_TOKEN ?? await promptSecret("Slack bot token (xoxb-): ");
     const appToken = process.env.PI_SHIP_SLACK_APP_TOKEN ?? await promptSecret("Slack Socket Mode app token (xapp-): ");
     if (!modelApiKey || !botToken || !appToken) throw new Error("Model and Slack credentials are required.");
-    config.slack = { socketMode: true };
+    config.slack = {
+      socketMode: true,
+      pairingCodeHash: hashPairingCode(pairingCode),
+      statePath: "/var/lib/pi-ship/slack-state.json",
+    };
     secrets.slack = { botToken, appToken };
   }
 
@@ -99,7 +103,9 @@ async function deploy(args: string[]): Promise<void> {
     console.log("\nOpen your Telegram bot and send:");
     console.log(`  /pair ${pairingCode}`);
   } else {
-    console.log("\nMention the installed Slack app in a channel, or send it a direct message.");
+    console.log("\nSend this direct message to the installed Slack app:");
+    console.log(`  /pair ${pairingCode}`);
+    console.log("\nAfter pairing, that Slack user can mention the app in channels or send direct messages.");
   }
   console.log(`\nCheck it later with: pi-ship status ${name}`);
 }
