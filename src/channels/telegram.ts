@@ -1,4 +1,5 @@
-import type { CommunicationProvider, MessageHandler } from "./types.js";
+import type { CommunicationProvider, IncomingMessage, MessageHandler, OutboundResponse } from "./types.js";
+import { UpdatingResponse } from "./updating-response.js";
 import { pairingCodeMatches, PairingStore } from "../pairing.js";
 
 interface TelegramUpdate {
@@ -59,6 +60,68 @@ export class TelegramProvider implements CommunicationProvider {
     for (const part of splitTelegramMessage(text)) {
       await this.call("sendMessage", { chat_id: conversationId, text: part }, signal);
     }
+  }
+
+  async openResponse(message: IncomingMessage, signal: AbortSignal): Promise<OutboundResponse> {
+    const messageIds: number[] = [];
+    const published: string[] = [];
+    const showTyping = () => this.call("sendChatAction", {
+      chat_id: message.conversationId,
+      action: "typing",
+    }, signal).catch((error) => {
+      if (!signal.aborted) console.error(`[telegram] typing indicator failed: ${(error as Error).message}`);
+    });
+
+    // Telegram indicators expire after five seconds, so refresh while Pi is working.
+    await showTyping();
+    const typingTimer = setInterval(() => void showTyping(), 4_000);
+    const stopTyping = () => {
+      clearInterval(typingTimer);
+      signal.removeEventListener("abort", stopTyping);
+    };
+    signal.addEventListener("abort", stopTyping, { once: true });
+
+    const response = new UpdatingResponse({
+      minUpdateIntervalMs: 1_000,
+      publish: async (text) => {
+        const parts = splitTelegramMessage(text);
+        for (let index = 0; index < parts.length; index += 1) {
+          const part = parts[index]!;
+          if (messageIds[index] === undefined) {
+            const sent = await this.call<{ message_id: number }>("sendMessage", {
+              chat_id: message.conversationId,
+              text: part,
+            }, signal);
+            messageIds[index] = sent.message_id;
+            published[index] = part;
+          } else if (published[index] !== part) {
+            await this.call("editMessageText", {
+              chat_id: message.conversationId,
+              message_id: messageIds[index],
+              text: part,
+            }, signal);
+            published[index] = part;
+          }
+        }
+      },
+    });
+    return {
+      append: (delta) => response.append(delta),
+      complete: async (fallbackText) => {
+        try {
+          await response.complete(fallbackText);
+        } finally {
+          stopTyping();
+        }
+      },
+      fail: async (errorMessage) => {
+        try {
+          await response.fail(errorMessage);
+        } finally {
+          stopTyping();
+        }
+      },
+    };
   }
 
   private async handleUpdate(update: TelegramUpdate, handler: MessageHandler, signal: AbortSignal): Promise<void> {

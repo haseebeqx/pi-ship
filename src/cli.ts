@@ -39,23 +39,33 @@ async function deploy(args: string[]): Promise<void> {
   const providerInput = option(args, "--provider") ?? (await prompt("Model provider [anthropic/openai/google] (anthropic): ") || "anthropic");
   if (!isProvider(providerInput)) throw new Error(`Unsupported model provider: ${providerInput}`);
   const modelApiKey = process.env.PI_SHIP_MODEL_API_KEY ?? await promptSecret(`${providerInput} API key: `);
-  const botToken = process.env.PI_SHIP_TELEGRAM_TOKEN ?? await promptSecret("Telegram bot token: ");
-  if (!modelApiKey || !botToken) throw new Error("Model and Telegram credentials are required.");
+  const channel = option(args, "--channel") ?? (await prompt("Communication channel [telegram/slack] (telegram): ") || "telegram");
+  if (channel !== "telegram" && channel !== "slack") throw new Error(`Unsupported communication channel: ${channel}`);
 
   const pairingCode = randomBytes(5).toString("hex").toUpperCase();
   const config: ShipConfig = {
     name,
     workspace: "/var/lib/pi-ship/workspace",
     agentDir: "/var/lib/pi-ship/agent",
-    telegram: {
-      pairingCodeHash: hashPairingCode(pairingCode),
-      statePath: "/var/lib/pi-ship/telegram-state.json",
-    },
   };
   const secrets: ShipSecrets = {
     model: { provider: providerInput, apiKey: modelApiKey },
-    telegram: { botToken },
   };
+  if (channel === "telegram") {
+    const botToken = process.env.PI_SHIP_TELEGRAM_TOKEN ?? await promptSecret("Telegram bot token: ");
+    if (!modelApiKey || !botToken) throw new Error("Model and Telegram credentials are required.");
+    config.telegram = {
+      pairingCodeHash: hashPairingCode(pairingCode),
+      statePath: "/var/lib/pi-ship/telegram-state.json",
+    };
+    secrets.telegram = { botToken };
+  } else {
+    const botToken = process.env.PI_SHIP_SLACK_BOT_TOKEN ?? await promptSecret("Slack bot token (xoxb-): ");
+    const appToken = process.env.PI_SHIP_SLACK_APP_TOKEN ?? await promptSecret("Slack Socket Mode app token (xapp-): ");
+    if (!modelApiKey || !botToken || !appToken) throw new Error("Model and Slack credentials are required.");
+    config.slack = { socketMode: true };
+    secrets.slack = { botToken, appToken };
+  }
 
   const temporary = await mkdtemp(join(tmpdir(), "pi-ship-"));
   try {
@@ -85,8 +95,12 @@ async function deploy(args: string[]): Promise<void> {
   }
 
   console.log(`\n✓ ${name} is online`);
-  console.log("\nOpen your Telegram bot and send:");
-  console.log(`  /pair ${pairingCode}`);
+  if (channel === "telegram") {
+    console.log("\nOpen your Telegram bot and send:");
+    console.log(`  /pair ${pairingCode}`);
+  } else {
+    console.log("\nMention the installed Slack app in a channel, or send it a direct message.");
+  }
   console.log(`\nCheck it later with: pi-ship status ${name}`);
 }
 
@@ -138,14 +152,16 @@ async function logs(args: string[]): Promise<void> {
 function printHelp(): void {
   console.log(`pi-ship
 
-  deploy [user@host]   Install an always-running Pi and Telegram communication
+  deploy [user@host]   Install an always-running Pi with Telegram or Slack
   update <name>        Install the local runtime when it is newer than the server
   status <name>        Show the runtime version and whether Pi is online
   logs <name>          Follow Pi's logs
 
 Credentials can be supplied non-interactively through:
   PI_SHIP_MODEL_API_KEY
-  PI_SHIP_TELEGRAM_TOKEN`);
+  PI_SHIP_TELEGRAM_TOKEN
+  PI_SHIP_SLACK_BOT_TOKEN
+  PI_SHIP_SLACK_APP_TOKEN`);
 }
 
 function packageRoot(): string {

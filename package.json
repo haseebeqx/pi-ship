@@ -6,6 +6,8 @@
     "pi",
     "cli",
     "telegram",
+    "slack",
+    "streaming",
     "deployment",
     "ai-agent"
   ],

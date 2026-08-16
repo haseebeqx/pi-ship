@@ -4,9 +4,12 @@ export interface ShipConfig {
   name: string;
   workspace: string;
   agentDir: string;
-  telegram: {
+  telegram?: {
     pairingCodeHash: string;
     statePath: string;
+  };
+  slack?: {
+    socketMode: true;
   };
 }
 
@@ -15,8 +18,12 @@ export interface ShipSecrets {
     provider: "anthropic" | "openai" | "google";
     apiKey: string;
   };
-  telegram: {
+  telegram?: {
     botToken: string;
+  };
+  slack?: {
+    botToken: string;
+    appToken: string;
   };
 }
 
