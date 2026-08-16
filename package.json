@@ -1,0 +1,46 @@
+{
+  "name": "pi-ship",
+  "version": "0.1.0",
+  "description": "Deploy an always-running Pi to a remote server and talk to it securely",
+  "keywords": [
+    "pi",
+    "cli",
+    "telegram",
+    "deployment",
+    "ai-agent"
+  ],
+  "type": "module",
+  "bin": {
+    "pi-ship": "dist/cli.js",
+    "pi-ship-runtime": "dist/runtime.js"
+  },
+  "files": [
+    "dist",
+    "scripts",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "dev": "tsx src/cli.ts",
+    "runtime": "tsx src/runtime.ts",
+    "test": "node --import tsx --test test/**/*.test.ts",
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run check && npm test"
+  },
+  "dependencies": {
+    "@earendil-works/pi-coding-agent": "^0.84.2"
+  },
+  "devDependencies": {
+    "@types/node": "^24.12.0",
+    "tsx": "^4.23.0",
+    "typescript": "^5.9.3"
+  },
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "license": "MIT"
+}
