@@ -27,10 +27,13 @@ Only paired private Telegram accounts are allowed to send messages.
 ```bash
 npx --yes pi-ship@latest deploy user@server
 npx --yes pi-ship@latest status my-pi
+npx --yes pi-ship@latest update my-pi
 npx --yes pi-ship@latest logs my-pi
 ```
 
 If installed globally, the same commands are available as `pi-ship`.
+
+`status` reports the runtime version recorded on the server. `update` compares that version with the version of the local `pi-ship` package, and only uploads, installs, and restarts the runtime when the local version is newer. Configuration, credentials, workspace data, and agent state are preserved.
 
 ## Security conventions
 

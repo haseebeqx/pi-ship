@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { randomBytes } from "node:crypto";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,6 +8,7 @@ import { createInterface, emitKeypressEvents } from "node:readline";
 import { hashPairingCode } from "./pairing.js";
 import { resolveServer, saveServer } from "./inventory.js";
 import { run, shellQuote } from "./process.js";
+import { compareVersions, validateVersion } from "./version.js";
 import type { ShipConfig, ShipSecrets } from "./config.js";
 
 const [command = "help", ...args] = process.argv.slice(2);
@@ -15,6 +16,7 @@ const [command = "help", ...args] = process.argv.slice(2);
 try {
   switch (command) {
     case "deploy": await deploy(args); break;
+    case "update": await update(args); break;
     case "status": await status(args); break;
     case "logs": await logs(args); break;
     case "help":
@@ -66,14 +68,15 @@ async function deploy(args: string[]): Promise<void> {
     await chmod(secretsFile, 0o600);
 
     console.log("\nPreparing Pi Ship...");
-    await run("tar", ["-czf", archive, "--exclude=node_modules", "--exclude=src", "--exclude=test", "-C", root, "package.json", "dist", "scripts", "README.md"]);
+    await createArchive(root, archive);
 
     const remoteDir = `/tmp/pi-ship-${randomBytes(6).toString("hex")}`;
     await run("ssh", [target, `install -d -m 700 ${shellQuote(remoteDir)}`]);
     await run("scp", [archive, configFile, secretsFile, join(root, "scripts", "install.sh"), `${target}:${remoteDir}/`]);
 
     console.log("Installing and securing Pi on the server...");
-    const install = `${remoteDir}/install.sh ${remoteDir}/pi-ship.tgz ${remoteDir}/config.json ${remoteDir}/secrets.json`;
+    const version = await localVersion(root);
+    const install = `${remoteDir}/install.sh install ${remoteDir}/pi-ship.tgz ${remoteDir}/config.json ${remoteDir}/secrets.json ${shellQuote(version)}`;
     const elevate = `if [ \"$(id -u)\" = 0 ]; then bash ${install}; else sudo -n bash ${install}; fi`;
     await run("ssh", [target, elevate]);
     await saveServer(name, target);
@@ -87,11 +90,41 @@ async function deploy(args: string[]): Promise<void> {
   console.log(`\nCheck it later with: pi-ship status ${name}`);
 }
 
+async function update(args: string[]): Promise<void> {
+  const name = positional(args, 0);
+  if (!name) throw new Error("Usage: pi-ship update <name-or-user@host>");
+  const target = await resolveServer(name);
+  const root = packageRoot();
+  const available = await localVersion(root);
+  const installed = (await run("ssh", [target, "cat /opt/pi-ship/version"], { capture: true })).trim();
+
+  if (compareVersions(available, installed) <= 0) {
+    console.log(`No update needed: server has ${installed}, local runtime is ${available}.`);
+    return;
+  }
+
+  const temporary = await mkdtemp(join(tmpdir(), "pi-ship-update-"));
+  try {
+    const archive = join(temporary, "pi-ship.tgz");
+    await createArchive(root, archive);
+    const remoteDir = `/tmp/pi-ship-${randomBytes(6).toString("hex")}`;
+    await run("ssh", [target, `install -d -m 700 ${shellQuote(remoteDir)}`]);
+    await run("scp", [archive, join(root, "scripts", "install.sh"), `${target}:${remoteDir}/`]);
+    console.log(`Updating ${name} from ${installed} to ${available}...`);
+    const install = `${remoteDir}/install.sh update ${remoteDir}/pi-ship.tgz ${shellQuote(available)} ${shellQuote(installed)}`;
+    const elevate = `if [ \"$(id -u)\" = 0 ]; then bash ${install}; else sudo -n bash ${install}; fi`;
+    await run("ssh", [target, elevate]);
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+  console.log(`✓ ${name} is running Pi Ship ${available}`);
+}
+
 async function status(args: string[]): Promise<void> {
   const name = positional(args, 0);
   if (!name) throw new Error("Usage: pi-ship status <name-or-user@host>");
   const target = await resolveServer(name);
-  const output = await run("ssh", [target, "sudo -n systemctl is-active pi-ship.service && sudo -n systemctl --no-pager --full status pi-ship.service | head -n 12"], { capture: true });
+  const output = await run("ssh", [target, "printf 'Runtime version: '; cat /opt/pi-ship/version && sudo -n systemctl is-active pi-ship.service && sudo -n systemctl --no-pager --full status pi-ship.service | head -n 12"], { capture: true });
   process.stdout.write(output);
 }
 
@@ -106,7 +139,8 @@ function printHelp(): void {
   console.log(`pi-ship
 
   deploy [user@host]   Install an always-running Pi and Telegram communication
-  status <name>        Check whether Pi is online
+  update <name>        Install the local runtime when it is newer than the server
+  status <name>        Show the runtime version and whether Pi is online
   logs <name>          Follow Pi's logs
 
 Credentials can be supplied non-interactively through:
@@ -116,6 +150,17 @@ Credentials can be supplied non-interactively through:
 
 function packageRoot(): string {
   return resolve(dirname(fileURLToPath(import.meta.url)), "..");
+}
+
+async function localVersion(root: string): Promise<string> {
+  const manifest = JSON.parse(await readFile(join(root, "package.json"), "utf8")) as { version?: unknown };
+  if (typeof manifest.version !== "string") throw new Error("package.json does not contain a version");
+  validateVersion(manifest.version);
+  return manifest.version;
+}
+
+async function createArchive(root: string, archive: string): Promise<void> {
+  await run("tar", ["-czf", archive, "--exclude=node_modules", "--exclude=src", "--exclude=test", "-C", root, "package.json", "dist", "scripts", "README.md"]);
 }
 
 function option(args: string[], name: string): string | undefined {
