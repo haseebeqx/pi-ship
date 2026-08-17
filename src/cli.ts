@@ -19,6 +19,7 @@ try {
     case "deploy": await deploy(args); break;
     case "pi": await runPi(args); break;
     case "update": await update(args); break;
+    case "update-pi": await updatePi(args); break;
     case "status": await status(args); break;
     case "logs": await logs(args); break;
     case "help":
@@ -166,11 +167,39 @@ async function update(args: string[]): Promise<void> {
   console.log(`✓ ${name} has Pi Ship ${available}`);
 }
 
+async function updatePi(args: string[]): Promise<void> {
+  const options = parseOptions(args, ["--server", "--certificate", "--version"]);
+  const name = await required(options, "--server", "Server (saved name or user@host): ");
+  const connection = await resolveServer(name, certificateOption(options));
+  const packageName = "@earendil-works/pi-coding-agent";
+  const installedCommand = `/opt/pi-ship/node/bin/node -p ${shellQuote(`require('/opt/pi-ship/app/lib/node_modules/pi-ship/node_modules/${packageName}/package.json').version`)}`;
+  const installed = (await run("ssh", sshArgs(connection, installedCommand), { capture: true })).trim();
+  validateVersion(installed);
+
+  const requested = options.get("--version");
+  const available = requested
+    ?? (await run("npm", ["view", `${packageName}@latest`, "version"], { capture: true })).trim();
+  validateVersion(available);
+  if (compareVersions(available, installed) <= 0) {
+    console.log(`No Pi update needed: server has ${installed}, requested version is ${available}.`);
+    return;
+  }
+
+  const remoteDir = `/tmp/pi-ship-${randomBytes(6).toString("hex")}`;
+  await run("ssh", sshArgs(connection, `install -d -m 700 ${shellQuote(remoteDir)}`));
+  await run("scp", scpArgs(connection, join(packageRoot(), "scripts", "install.sh"), `${connection.target}:${remoteDir}/`));
+  console.log(`Updating Pi on ${name} from ${installed} to ${available}...`);
+  const install = `${remoteDir}/install.sh update-pi ${shellQuote(available)} ${shellQuote(installed)}`;
+  const elevate = `if [ \"$(id -u)\" = 0 ]; then bash ${install}; else sudo -n bash ${install}; fi`;
+  await run("ssh", sshArgs(connection, elevate));
+  console.log(`✓ ${name} has Pi ${available}`);
+}
+
 async function status(args: string[]): Promise<void> {
   const options = parseOptions(args, ["--server", "--certificate"]);
   const server = await required(options, "--server", "Server (saved name or user@host): ");
   const connection = await resolveServer(server, certificateOption(options));
-  const remoteCommand = "printf 'Runtime version: '; cat /opt/pi-ship/version && if sudo -n systemctl is-enabled --quiet pi-ship.service; then printf 'Mode: communication provider (persistent)\\n'; sudo -n systemctl is-active pi-ship.service; sudo -n systemctl --no-pager --full status pi-ship.service | head -n 12; else printf 'Mode: connect (on demand)\\n'; fi";
+  const remoteCommand = "printf 'Runtime version: '; cat /opt/pi-ship/version; printf 'Pi version: '; /opt/pi-ship/node/bin/node -p \"require('/opt/pi-ship/app/lib/node_modules/pi-ship/node_modules/@earendil-works/pi-coding-agent/package.json').version\" && if sudo -n systemctl is-enabled --quiet pi-ship.service; then printf 'Mode: communication provider (persistent)\\n'; sudo -n systemctl is-active pi-ship.service; sudo -n systemctl --no-pager --full status pi-ship.service | head -n 12; else printf 'Mode: connect (on demand)\\n'; fi";
   const output = await run("ssh", sshArgs(connection, remoteCommand), { capture: true });
   process.stdout.write(output);
 }
@@ -188,8 +217,9 @@ function printHelp(): void {
   deploy --server <user@host> --name <name>
          [--channel <telegram|slack> [channel credentials]] [--certificate <path>]
   pi      --server <name-or-user@host> [--certificate <path>] [-- <pi-args...>]
-  update  --server <name-or-user@host> [--certificate <path>]
-  status --server <name-or-user@host> [--certificate <path>]
+  update    --server <name-or-user@host> [--certificate <path>]
+  update-pi --server <name-or-user@host> [--certificate <path>] [--version <semver>]
+  status    --server <name-or-user@host> [--certificate <path>]
   logs   --server <name-or-user@host> [--certificate <path>]
 
 Deploy channel credentials:
@@ -203,7 +233,7 @@ Authenticate model providers from Pi with /login. Channel credentials may also
 be supplied through PI_SHIP_TELEGRAM_TOKEN, PI_SHIP_SLACK_BOT_TOKEN, and
 PI_SHIP_SLACK_APP_TOKEN.
 The certificate is used as the SSH identity file. A certificate supplied during
-deploy is saved with the named server for later pi, update, status, and logs calls.`);
+deploy is saved with the named server for later pi, update, update-pi, status, and logs calls.`);
 }
 
 function packageRoot(): string {

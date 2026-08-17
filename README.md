@@ -100,12 +100,13 @@ npx --yes pi-ship@latest pi --server my-pi
 npx --yes pi-ship@latest pi --server my-pi -- install npm:@foo/bar
 npx --yes pi-ship@latest status --server my-pi
 npx --yes pi-ship@latest update --server my-pi
+npx --yes pi-ship@latest update-pi --server my-pi
 npx --yes pi-ship@latest logs --server my-pi
 ```
 
 If installed globally, the same commands are available as `pi-ship`. Required options that are omitted are requested interactively. In non-interactive environments, supply them as flags or credential environment variables.
 
-`pi` with no Pi arguments streams a fresh, one-off Pi TUI over SSH; no remote Pi process remains after it exits. Arguments after `--` are passed directly to the remote Pi CLI, allowing commands such as `install`, `remove`, and `list`. `status` reports the runtime version and whether it is persistent or on demand. `update` compares that version with the local `pi-ship` package and only uploads and installs when the local version is newer. Configuration, credentials, workspace data, and agent state are preserved.
+`pi` with no Pi arguments streams a fresh, one-off Pi TUI over SSH; no remote Pi process remains after it exits. Arguments after `--` are passed directly to the remote Pi CLI, allowing commands such as `install`, `remove`, and `list`. `status` reports the Pi Ship and Pi versions and whether the runtime is persistent or on demand. `update` compares that version with the local `pi-ship` package and only uploads and installs when the local version is newer. `update-pi` updates the remote Pi binary to the latest release independently of Pi Ship; pass `--version <semver>` to install a specific newer version. Persistent services are restarted and automatically rolled back if the updated Pi fails to start. Configuration, credentials, workspace data, and agent state are preserved.
 
 ## Security conventions
 

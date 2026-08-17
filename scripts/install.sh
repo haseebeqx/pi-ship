@@ -39,6 +39,80 @@ write_version() {
   mv /opt/pi-ship/version.tmp /opt/pi-ship/version
 }
 
+write_pi_version() {
+  local version=$1
+  printf '%s\n' "$version" >/opt/pi-ship/pi-version.tmp
+  chmod 644 /opt/pi-ship/pi-version.tmp
+  mv /opt/pi-ship/pi-version.tmp /opt/pi-ship/pi-version
+}
+
+install_pi_version() {
+  local destination=$1
+  local version=$2
+  local package_name=@earendil-works/pi-coding-agent
+  local package_root="$destination/lib/node_modules/pi-ship"
+  PATH="/opt/pi-ship/node/bin:$PATH" /opt/pi-ship/node/bin/npm install \
+    --prefix "$package_root" --save-exact "$package_name@$version" \
+    --omit=dev --no-audit --no-fund
+  local installed
+  installed=$(/opt/pi-ship/node/bin/node -p 'require(process.argv[1]).version' "$package_root/node_modules/$package_name/package.json")
+  if [[ $installed != "$version" ]]; then
+    echo "installed Pi version $installed does not match requested version $version" >&2
+    exit 1
+  fi
+}
+
+if [[ $MODE == update-pi ]]; then
+  VERSION=${2:?Pi version is required}
+  EXPECTED_VERSION=${3:?expected installed Pi version is required}
+  [[ -x /opt/pi-ship/node/bin/npm ]] || { echo "Pi Ship runtime is not installed" >&2; exit 1; }
+  validate_version "$VERSION"
+  validate_version "$EXPECTED_VERSION"
+
+  package_name=@earendil-works/pi-coding-agent
+  package_root=/opt/pi-ship/app/lib/node_modules/pi-ship
+  package_json="$package_root/node_modules/$package_name/package.json"
+  [[ -f $package_json ]] || { echo "Pi is not installed in the Pi Ship runtime" >&2; exit 1; }
+  INSTALLED=$(/opt/pi-ship/node/bin/node -p 'require(process.argv[1]).version' "$package_json")
+  if [[ $INSTALLED != "$EXPECTED_VERSION" ]]; then
+    echo "Pi version changed during update (expected $EXPECTED_VERSION, found $INSTALLED)" >&2
+    exit 1
+  fi
+
+  staging=$(mktemp -d /opt/pi-ship/app.new.XXXXXX)
+  old=/opt/pi-ship/app.old
+  trap 'rm -rf "$staging"' EXIT
+  cp -a /opt/pi-ship/app/. "$staging/"
+  install_pi_version "$staging" "$VERSION"
+
+  PERSISTENT=$(/opt/pi-ship/node/bin/node -e 'const c=require(process.argv[1]); process.stdout.write(c.telegram || c.slack ? "yes" : "no")' /etc/pi-ship/config.json)
+  if [[ $PERSISTENT == yes ]]; then
+    systemctl stop pi-ship.service
+  fi
+  rm -rf "$old"
+  mv /opt/pi-ship/app "$old"
+  mv "$staging" /opt/pi-ship/app
+
+  if [[ $PERSISTENT == no ]]; then
+    write_pi_version "$VERSION"
+    rm -rf "$old" "$(dirname "$0")"
+    echo "Pi updated successfully to $VERSION"
+    exit 0
+  fi
+  if systemctl start pi-ship.service && sleep 2 && systemctl is-active --quiet pi-ship.service; then
+    write_pi_version "$VERSION"
+    rm -rf "$old" "$(dirname "$0")"
+    echo "Pi updated successfully to $VERSION"
+    exit 0
+  fi
+
+  echo "updated Pi failed to start; restoring version $EXPECTED_VERSION" >&2
+  rm -rf /opt/pi-ship/app
+  mv "$old" /opt/pi-ship/app
+  systemctl restart pi-ship.service
+  exit 1
+fi
+
 if [[ $MODE == update ]]; then
   ARCHIVE=${2:?package archive is required}
   VERSION=${3:?runtime version is required}
@@ -57,6 +131,11 @@ if [[ $MODE == update ]]; then
   old=/opt/pi-ship/app.old
   trap 'rm -rf "$staging"' EXIT
   install_runtime "$ARCHIVE" "$staging" "$VERSION"
+  if [[ -f /opt/pi-ship/pi-version ]]; then
+    PI_VERSION=$(< /opt/pi-ship/pi-version)
+    validate_version "$PI_VERSION"
+    install_pi_version "$staging" "$PI_VERSION"
+  fi
 
   PERSISTENT=$(/opt/pi-ship/node/bin/node -e 'const c=require(process.argv[1]); process.stdout.write(c.telegram || c.slack ? "yes" : "no")' /etc/pi-ship/config.json)
   if [[ $PERSISTENT == yes ]]; then
@@ -87,7 +166,7 @@ if [[ $MODE == update ]]; then
 fi
 
 if [[ $MODE != install ]]; then
-  echo "usage: install.sh install <archive> <config> <secrets> <version> | update <archive> <version> <expected-version>" >&2
+  echo "usage: install.sh install <archive> <config> <secrets> <version> | update <archive> <version> <expected-version> | update-pi <version> <expected-version>" >&2
   exit 1
 fi
 
@@ -132,6 +211,9 @@ if ! id pi-ship >/dev/null 2>&1; then
 fi
 
 install_runtime "$ARCHIVE" /opt/pi-ship/app "$VERSION"
+PI_VERSION=$(/opt/pi-ship/node/bin/node -p "require('/opt/pi-ship/app/lib/node_modules/pi-ship/node_modules/@earendil-works/pi-coding-agent/package.json').version")
+validate_version "$PI_VERSION"
+write_pi_version "$PI_VERSION"
 
 install -d -m 750 -o pi-ship -g pi-ship /etc/pi-ship
 install -m 640 -o root -g pi-ship "$CONFIG" /etc/pi-ship/config.json
