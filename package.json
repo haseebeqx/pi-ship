@@ -14,6 +14,7 @@
   "type": "module",
   "bin": {
     "pi-ship": "dist/cli.js",
+    "pi-ship-connect": "dist/connect.js",
     "pi-ship-runtime": "dist/runtime.js"
   },
   "files": [

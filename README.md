@@ -1,8 +1,8 @@
 # Pi Ship
 
-Deploy an always-running [Pi](https://pi.dev) to any SSH-accessible Linux server and communicate with it through Telegram or Slack. Users do not configure Node.js, npm, public ports, TLS, process supervisors, or webhooks.
+Deploy [Pi](https://pi.dev) to any SSH-accessible Linux server and connect directly for an on-demand terminal session. Optionally configure Telegram or Slack to keep Pi running continuously. Users do not configure Node.js, npm, public ports, TLS, process supervisors, or webhooks.
 
-Responses stream in real time by creating provider messages and updating them as Pi emits text. Long responses continue in additional messages instead of discarding earlier output. Provider adapters own rate limiting and platform-specific rendering. Telegram also keeps its typing indicator active while Pi is working.
+Direct sessions stream Pi's interactive terminal over SSH and stop when you disconnect. With a communication provider, responses stream in real time by creating provider messages and updating them as Pi emits text. Long responses continue in additional messages instead of discarding earlier output.
 
 > Early development: review the installer before using it on a production server.
 
@@ -16,17 +16,40 @@ Requires Node.js 22.19 or newer on your local machine, plus SSH access to an Ubu
 npx --yes pi-ship@latest deploy
 ```
 
-**That is the only command you need.** Pi Ship interactively asks for every required option, offers sensible defaults, and hides credentials as you type them. Nothing needs to be installed globally.
+Pi Ship asks for the server and model credentials, hides credentials as you type them, and optionally lets you enter an SSH identity file. With no `--channel`, it installs in on-demand mode and does not leave an agent process running. Connect after deployment with:
 
-If SSH requires an identity file, include the optional certificate argument and Pi Ship will ask for everything else:
+```bash
+npx --yes pi-ship@latest connect --server my-pi
+```
+
+This opens a fresh, ephemeral Pi terminal session on the server. Nothing needs to be installed globally.
+
+If you leave the identity file blank, SSH uses your agent or default keys and can prompt for the server account's password normally. An encrypted identity file can likewise prompt for its passphrase. Because deployment opens several SSH/SCP connections, you may be prompted more than once unless an SSH agent caches the credential.
+
+You can also provide the identity file up front and let Pi Ship ask for everything else:
 
 ```bash
 npx --yes pi-ship@latest deploy --certificate ~/.ssh/server.pem
 ```
 
+> The server account must still have passwordless `sudo`. SSH login passwords and key passphrases are supported, but Pi Ship's remote installer does not accept a `sudo` password.
+
 ### Non-interactive setup
 
-For automation, provide every option explicitly:
+For automation, provide the server and model options explicitly. This example uses the default on-demand mode:
+
+```bash
+npx --yes pi-ship@latest deploy \
+  --server ubuntu@your-server \
+  --certificate ~/.ssh/server.pem \
+  --name my-pi \
+  --provider anthropic \
+  --model-api-key "$ANTHROPIC_API_KEY"
+
+npx --yes pi-ship@latest connect --server my-pi
+```
+
+To run Pi continuously through a communication provider, add channel credentials:
 
 ```bash
 npx --yes pi-ship@latest deploy \
@@ -76,7 +99,8 @@ The bot token must begin with `xoxb-` and the Socket Mode app token with `xapp-`
 ## Commands
 
 ```bash
-npx --yes pi-ship@latest deploy --server user@server --name my-pi --provider anthropic --model-api-key <key> --channel telegram --telegram-bot-token <token> [--certificate <path>]
+npx --yes pi-ship@latest deploy --server user@server --name my-pi --provider anthropic --model-api-key <key> [--certificate <path>]
+npx --yes pi-ship@latest connect --server my-pi
 npx --yes pi-ship@latest status --server my-pi
 npx --yes pi-ship@latest update --server my-pi
 npx --yes pi-ship@latest logs --server my-pi
@@ -84,7 +108,7 @@ npx --yes pi-ship@latest logs --server my-pi
 
 If installed globally, the same commands are available as `pi-ship`. Required options that are omitted are requested interactively. In non-interactive environments, supply them as flags or credential environment variables.
 
-`status` reports the runtime version recorded on the server. `update` compares that version with the version of the local `pi-ship` package, and only uploads, installs, and restarts the runtime when the local version is newer. Configuration, credentials, workspace data, and agent state are preserved.
+`connect` streams a fresh, one-off Pi TUI over SSH; no remote Pi process remains after it exits. `status` reports the runtime version and whether it is persistent or on demand. `update` compares that version with the local `pi-ship` package and only uploads and installs when the local version is newer. Configuration, credentials, workspace data, and agent state are preserved.
 
 ## Security conventions
 
@@ -95,7 +119,8 @@ If installed globally, the same commands are available as `pi-ship`. Required op
 - Credentials stored in a root-owned, group-readable file with mode `0640`
 - One-time, DM-only pairing codes and sender allowlists for Telegram and Slack
 - Pinned Node.js download verified against the official checksum
-- Pi process automatically restarted after failure or reboot
+- Communication-provider mode automatically restarts Pi after failure or reboot
+- On-demand mode runs Pi only for the lifetime of `pi-ship connect`
 
 Pi plugins execute arbitrary code and can access the Pi user's workspace and credentials. Only install plugins you trust. The process does not run as root, but this is not a complete sandbox.
 

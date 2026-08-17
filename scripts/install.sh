@@ -58,10 +58,20 @@ if [[ $MODE == update ]]; then
   trap 'rm -rf "$staging"' EXIT
   install_runtime "$ARCHIVE" "$staging" "$VERSION"
 
-  systemctl stop pi-ship.service
+  PERSISTENT=$(/opt/pi-ship/node/bin/node -e 'const c=require(process.argv[1]); process.stdout.write(c.telegram || c.slack ? "yes" : "no")' /etc/pi-ship/config.json)
+  if [[ $PERSISTENT == yes ]]; then
+    systemctl stop pi-ship.service
+  fi
   rm -rf "$old"
   mv /opt/pi-ship/app "$old"
   mv "$staging" /opt/pi-ship/app
+
+  if [[ $PERSISTENT == no ]]; then
+    write_version "$VERSION"
+    rm -rf "$old" "$(dirname "$ARCHIVE")"
+    echo "Pi Ship updated successfully to $VERSION"
+    exit 0
+  fi
   if systemctl start pi-ship.service && sleep 2 && systemctl is-active --quiet pi-ship.service; then
     write_version "$VERSION"
     rm -rf "$old" "$(dirname "$ARCHIVE")"
@@ -167,9 +177,15 @@ WantedBy=multi-user.target
 UNIT
 
 systemctl daemon-reload
-systemctl enable --now pi-ship.service
-sleep 2
-systemctl is-active --quiet pi-ship.service
+PERSISTENT=$(/opt/pi-ship/node/bin/node -e 'const c=require(process.argv[1]); process.exit(c.telegram || c.slack ? 0 : 1)' "$CONFIG" && echo yes || echo no)
+if [[ $PERSISTENT == yes ]]; then
+  systemctl enable --now pi-ship.service
+  sleep 2
+  systemctl is-active --quiet pi-ship.service
+  echo "Pi Ship $VERSION installed with a persistent communication provider"
+else
+  systemctl disable --now pi-ship.service >/dev/null 2>&1 || true
+  echo "Pi Ship $VERSION installed for on-demand connections"
+fi
 write_version "$VERSION"
 rm -rf "$(dirname "$ARCHIVE")"
-echo "Pi Ship $VERSION installed successfully"
