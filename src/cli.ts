@@ -17,7 +17,7 @@ const [command = "help", ...args] = process.argv.slice(2);
 try {
   switch (command) {
     case "deploy": await deploy(args); break;
-    case "connect": await connect(args); break;
+    case "pi": await runPi(args); break;
     case "update": await update(args); break;
     case "status": await status(args); break;
     case "logs": await logs(args); break;
@@ -119,17 +119,20 @@ async function deploy(args: string[]): Promise<void> {
     console.log("\nAfter pairing, that Slack user can mention the app in channels or send direct messages.");
   } else {
     console.log("\nPi will run only while you are connected. Start a one-off session with:");
-    console.log(`  pi-ship connect --server ${name}`);
+    console.log(`  pi-ship pi --server ${name}`);
   }
   console.log(`\nCheck it later with: pi-ship status --server ${name}`);
 }
 
-async function connect(args: string[]): Promise<void> {
-  const options = parseOptions(args, ["--server", "--certificate"]);
+async function runPi(args: string[]): Promise<void> {
+  const { shipArgs, piArgs } = splitPiArgs(args);
+  const options = parseOptions(shipArgs, ["--server", "--certificate"]);
   const server = await required(options, "--server", "Server (saved name or user@host): ");
   const connection = await resolveServer(server, certificateOption(options));
-  const remoteCommand = "sudo -n -u pi-ship env HOME=/var/lib/pi-ship PATH=/opt/pi-ship/node/bin:/usr/local/bin:/usr/bin:/bin PI_SHIP_CONFIG=/etc/pi-ship/config.json /opt/pi-ship/app/bin/pi-ship-connect";
-  await run("ssh", sshArgs(connection, "-t", remoteCommand));
+  const executable = "sudo -n -u pi-ship env HOME=/var/lib/pi-ship PATH=/opt/pi-ship/node/bin:/usr/local/bin:/usr/bin:/bin PI_SHIP_CONFIG=/etc/pi-ship/config.json /opt/pi-ship/app/bin/pi-ship-pi";
+  const remoteCommand = [executable, ...piArgs.map(shellQuote)].join(" ");
+  const ttyArgs = process.stdin.isTTY && process.stdout.isTTY ? ["-t"] : [];
+  await run("ssh", sshArgs(connection, ...ttyArgs, remoteCommand));
 }
 
 async function update(args: string[]): Promise<void> {
@@ -184,8 +187,8 @@ function printHelp(): void {
 
   deploy --server <user@host> --name <name>
          [--channel <telegram|slack> [channel credentials]] [--certificate <path>]
-  connect --server <name-or-user@host> [--certificate <path>]
-  update --server <name-or-user@host> [--certificate <path>]
+  pi      --server <name-or-user@host> [--certificate <path>] [-- <pi-args...>]
+  update  --server <name-or-user@host> [--certificate <path>]
   status --server <name-or-user@host> [--certificate <path>]
   logs   --server <name-or-user@host> [--certificate <path>]
 
@@ -193,13 +196,14 @@ Deploy channel credentials:
   Telegram: --telegram-bot-token <token>
   Slack:    --slack-bot-token <token> --slack-app-token <token>
 
-Without --channel, Pi runs only for one-off sessions opened by connect.
+Without --channel, Pi runs only for one-off sessions opened by pi.
+Arguments after -- are passed directly to Pi; for example: pi-ship pi --server my-pi -- install npm:@foo/bar
 Missing required options are prompted for when running in a terminal.
 Authenticate model providers from Pi with /login. Channel credentials may also
 be supplied through PI_SHIP_TELEGRAM_TOKEN, PI_SHIP_SLACK_BOT_TOKEN, and
 PI_SHIP_SLACK_APP_TOKEN.
 The certificate is used as the SSH identity file. A certificate supplied during
-deploy is saved with the named server for later connect, update, status, and logs calls.`);
+deploy is saved with the named server for later pi, update, status, and logs calls.`);
 }
 
 function packageRoot(): string {
@@ -215,6 +219,28 @@ async function localVersion(root: string): Promise<string> {
 
 async function createArchive(root: string, archive: string): Promise<void> {
   await run("tar", ["-czf", archive, "--exclude=node_modules", "--exclude=src", "--exclude=test", "-C", root, "package.json", "dist", "scripts", "README.md"]);
+}
+
+function splitPiArgs(args: string[]): { shipArgs: string[]; piArgs: string[] } {
+  const shipArgs: string[] = [];
+  const shipOptions = new Set(["--server", "--certificate"]);
+
+  for (let index = 0; index < args.length;) {
+    const arg = args[index]!;
+    if (arg === "--") return { shipArgs, piArgs: args.slice(index + 1) };
+    if (!shipOptions.has(arg)) return { shipArgs, piArgs: args.slice(index) };
+
+    shipArgs.push(arg);
+    const value = args[index + 1];
+    if (value !== undefined && value !== "--" && !value.startsWith("--")) {
+      shipArgs.push(value);
+      index += 2;
+    } else {
+      index += 1;
+    }
+  }
+
+  return { shipArgs, piArgs: [] };
 }
 
 function parseOptions(args: string[], allowed: string[]): Map<string, string> {

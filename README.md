@@ -16,10 +16,10 @@ Requires Node.js 22.19 or newer on your local machine, plus SSH access to an Ubu
 npx --yes pi-ship@latest deploy
 ```
 
-Pi Ship asks for the server details and optionally lets you enter an SSH identity file. With no `--channel`, it installs in on-demand mode and does not leave an agent process running. Connect after deployment with:
+Pi Ship asks for the server details and optionally lets you enter an SSH identity file. With no `--channel`, it installs in on-demand mode and does not leave an agent process running. Start Pi after deployment with:
 
 ```bash
-npx --yes pi-ship@latest connect --server my-pi
+npx --yes pi-ship@latest pi --server my-pi
 ```
 
 This opens a fresh, ephemeral Pi terminal session on the server. Nothing needs to be installed globally. Use Pi's `/login` command to authenticate any supported provider, then select a model with `/model` or Ctrl+L. Authentication is saved on the server for later sessions.
@@ -44,7 +44,7 @@ npx --yes pi-ship@latest deploy \
   --certificate ~/.ssh/server.pem \
   --name my-pi
 
-npx --yes pi-ship@latest connect --server my-pi
+npx --yes pi-ship@latest pi --server my-pi
 ```
 
 To run Pi continuously through a communication provider, add channel credentials:
@@ -60,7 +60,7 @@ npx --yes pi-ship@latest deploy \
 
 A certificate supplied during deployment is saved with the named server for later commands. Bot tokens can also be supplied through `PI_SHIP_TELEGRAM_TOKEN`, `PI_SHIP_SLACK_BOT_TOKEN`, and `PI_SHIP_SLACK_APP_TOKEN`. Be aware that secrets passed directly on the command line may be visible to other local processes while the command runs.
 
-Pi Ship does not restrict or configure Pi's model providers. Before using a persistent Telegram or Slack channel, run `pi-ship connect --server my-pi` and authenticate through Pi's `/login` command.
+Pi Ship does not restrict or configure Pi's model providers. Before using a persistent Telegram or Slack channel, run `pi-ship pi --server my-pi` and authenticate through Pi's `/login` command.
 
 After deployment, send the displayed pairing command to the Telegram bot:
 
@@ -96,7 +96,8 @@ The bot token must begin with `xoxb-` and the Socket Mode app token with `xapp-`
 
 ```bash
 npx --yes pi-ship@latest deploy --server user@server --name my-pi [--certificate <path>]
-npx --yes pi-ship@latest connect --server my-pi
+npx --yes pi-ship@latest pi --server my-pi
+npx --yes pi-ship@latest pi --server my-pi -- install npm:@foo/bar
 npx --yes pi-ship@latest status --server my-pi
 npx --yes pi-ship@latest update --server my-pi
 npx --yes pi-ship@latest logs --server my-pi
@@ -104,7 +105,7 @@ npx --yes pi-ship@latest logs --server my-pi
 
 If installed globally, the same commands are available as `pi-ship`. Required options that are omitted are requested interactively. In non-interactive environments, supply them as flags or credential environment variables.
 
-`connect` streams a fresh, one-off Pi TUI over SSH; no remote Pi process remains after it exits. `status` reports the runtime version and whether it is persistent or on demand. `update` compares that version with the local `pi-ship` package and only uploads and installs when the local version is newer. Configuration, credentials, workspace data, and agent state are preserved.
+`pi` with no Pi arguments streams a fresh, one-off Pi TUI over SSH; no remote Pi process remains after it exits. Arguments after `--` are passed directly to the remote Pi CLI, allowing commands such as `install`, `remove`, and `list`. `status` reports the runtime version and whether it is persistent or on demand. `update` compares that version with the local `pi-ship` package and only uploads and installs when the local version is newer. Configuration, credentials, workspace data, and agent state are preserved.
 
 ## Security conventions
 
@@ -116,7 +117,7 @@ If installed globally, the same commands are available as `pi-ship`. Required op
 - One-time, DM-only pairing codes and sender allowlists for Telegram and Slack
 - Pinned Node.js download verified against the official checksum
 - Communication-provider mode automatically restarts Pi after failure or reboot
-- On-demand mode runs Pi only for the lifetime of `pi-ship connect`
+- On-demand mode runs Pi only for the lifetime of `pi-ship pi`
 
 Pi plugins execute arbitrary code and can access the Pi user's workspace and credentials. Only install plugins you trust. The process does not run as root, but this is not a complete sandbox.
 

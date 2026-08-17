@@ -12,11 +12,9 @@ await mkdir(config.agentDir, { recursive: true });
 
 const piModule = import.meta.resolve("@earendil-works/pi-coding-agent");
 const cliPath = fileURLToPath(new URL("cli.js", piModule));
-const child = spawn(process.execPath, [
-  cliPath,
-  "--no-session",
-  "--approve",
-], {
+const forwardedArgs = process.argv.slice(2);
+const piArgs = forwardedArgs.length > 0 ? forwardedArgs : ["--no-session", "--approve"];
+const child = spawn(process.execPath, [cliPath, ...piArgs], {
   cwd: config.workspace,
   env: { ...process.env, PI_CODING_AGENT_DIR: config.agentDir },
   stdio: "inherit",
