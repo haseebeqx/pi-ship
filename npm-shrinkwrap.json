@@ -9,7 +9,7 @@
       "version": "0.1.0",
       "license": "MIT",
       "dependencies": {
-        "@earendil-works/pi-coding-agent": "^0.84.2"
+        "@earendil-works/pi-coding-agent": "0.84.2"
       },
       "bin": {
         "pi-ship": "dist/cli.js",

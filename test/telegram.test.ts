@@ -14,6 +14,30 @@ test("long lines are split at the hard limit", () => {
   assert.deepEqual(splitTelegramMessage("abcdefghijkl", 5), ["abcde", "fghij", "kl"]);
 });
 
+test("Telegram reports ready after its first successful poll", async () => {
+  const timeouts: unknown[] = [];
+  const fetchMock = (async (_input: string | URL | Request, init?: RequestInit) => {
+    const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+    timeouts.push(body.timeout);
+    return new Response(JSON.stringify({ ok: true, result: [] }), { status: 200 });
+  }) as typeof fetch;
+  const provider = new TelegramProvider({
+    token: "token",
+    pairingCodeHash: "hash",
+    statePath: "/unused",
+    fetch: fetchMock,
+  });
+  const abort = new AbortController();
+  let ready = false;
+  await provider.start(async () => {}, abort.signal, () => {
+    ready = true;
+    abort.abort();
+  });
+
+  assert.equal(ready, true);
+  assert.deepEqual(timeouts, [0]);
+});
+
 test("Telegram shows typing while a response is being generated", async () => {
   const methods: string[] = [];
   const fetchMock = (async (input: string | URL | Request) => {

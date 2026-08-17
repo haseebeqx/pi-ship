@@ -13,13 +13,13 @@ Requires Node.js 22.19 or newer on your local machine, plus SSH access to an Ubu
 ### Interactive setup (recommended)
 
 ```bash
-npx --yes pi-ship@latest deploy
+npx --yes pi-ship deploy
 ```
 
 Pi Ship asks for the server details and optionally lets you enter an SSH identity file. With no `--channel`, it installs in on-demand mode and does not leave an agent process running. Start Pi after deployment with:
 
 ```bash
-npx --yes pi-ship@latest pi --server my-pi
+npx --yes pi-ship pi --server my-pi
 ```
 
 This opens a fresh, ephemeral Pi terminal session on the server. Nothing needs to be installed globally. Use Pi's `/login` command to authenticate any supported provider, then select a model with `/model` or Ctrl+L. Authentication is saved on the server for later sessions.
@@ -29,7 +29,7 @@ If you leave the identity file blank, SSH uses your agent or default keys and ca
 You can also provide the identity file up front and let Pi Ship ask for everything else:
 
 ```bash
-npx --yes pi-ship@latest deploy --certificate ~/.ssh/server.pem
+npx --yes pi-ship deploy --certificate ~/.ssh/server.pem
 ```
 
 > The server account must still have passwordless `sudo`. SSH login passwords and key passphrases are supported, but Pi Ship's remote installer does not accept a `sudo` password.
@@ -39,18 +39,18 @@ npx --yes pi-ship@latest deploy --certificate ~/.ssh/server.pem
 For automation, provide the server options explicitly. This example uses the default on-demand mode:
 
 ```bash
-npx --yes pi-ship@latest deploy \
+npx --yes pi-ship deploy \
   --server ubuntu@your-server \
   --certificate ~/.ssh/server.pem \
   --name my-pi
 
-npx --yes pi-ship@latest pi --server my-pi
+npx --yes pi-ship pi --server my-pi
 ```
 
 To run Pi continuously through a communication provider, add channel credentials:
 
 ```bash
-npx --yes pi-ship@latest deploy \
+npx --yes pi-ship deploy \
   --server ubuntu@your-server \
   --certificate ~/.ssh/server.pem \
   --name my-pi \
@@ -81,7 +81,7 @@ Create a Slack app, enable **Socket Mode**, and create an app-level token (`xapp
 Subscribe to the `app_mention` and `message.im` bot events, install the app to the workspace, then deploy:
 
 ```bash
-npx --yes pi-ship@latest deploy \
+npx --yes pi-ship deploy \
   --server ubuntu@your-server \
   --certificate ~/.ssh/server.pem \
   --name my-pi \
@@ -95,13 +95,13 @@ The bot token must begin with `xoxb-` and the Socket Mode app token with `xapp-`
 ## Commands
 
 ```bash
-npx --yes pi-ship@latest deploy --server user@server --name my-pi [--certificate <path>]
-npx --yes pi-ship@latest pi --server my-pi
-npx --yes pi-ship@latest pi --server my-pi -- install npm:@foo/bar
-npx --yes pi-ship@latest status --server my-pi
-npx --yes pi-ship@latest update --server my-pi
-npx --yes pi-ship@latest update-pi --server my-pi
-npx --yes pi-ship@latest logs --server my-pi
+npx --yes pi-ship deploy --server user@server --name my-pi [--certificate <path>]
+npx --yes pi-ship pi --server my-pi
+npx --yes pi-ship pi --server my-pi -- install npm:@foo/bar
+npx --yes pi-ship status --server my-pi
+npx --yes pi-ship update --server my-pi
+npx --yes pi-ship update-pi --server my-pi
+npx --yes pi-ship logs --server my-pi
 ```
 
 If installed globally, the same commands are available as `pi-ship`. Required options that are omitted are requested interactively. In non-interactive environments, supply them as flags or credential environment variables.
@@ -116,8 +116,9 @@ If installed globally, the same commands are available as `pi-ship`. Required op
 - Hardened systemd service
 - Credentials stored in a root-owned, group-readable file with mode `0640`
 - One-time, DM-only pairing codes and sender allowlists for Telegram and Slack
-- Pinned Node.js download verified against the official checksum
-- Communication-provider mode automatically restarts Pi after failure or reboot
+- Pinned, shrinkwrapped production dependencies and a Node.js download verified against the official checksum
+- Communication-provider mode reports ready only after Pi and its transports connect, and automatically restarts after failure or reboot
+- Serialized deployment updates with readiness-checked rollback
 - On-demand mode runs Pi only for the lifetime of `pi-ship pi`
 
 Pi plugins execute arbitrary code and can access the Pi user's workspace and credentials. Only install plugins you trust. The process does not run as root, but this is not a complete sandbox.

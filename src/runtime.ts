@@ -133,6 +133,7 @@ function objectValue(value: unknown): RpcObject | undefined {
 
 class PiRpc {
   private child: ChildProcessWithoutNullStreams | undefined;
+  private stopping = false;
   private nextId = 0;
   private readonly listeners = new Set<(event: RpcObject) => void>();
   private readonly pending = new Map<string, { resolve: () => void; reject: (error: Error) => void }>();
@@ -142,6 +143,7 @@ class PiRpc {
   constructor(
     private readonly cwd: string,
     private readonly agentDir: string,
+    private readonly onFatal: (error: Error) => void,
   ) {}
 
   async start(): Promise<void> {
@@ -163,9 +165,15 @@ class PiRpc {
     this.child = child;
 
     child.stderr.on("data", (chunk: Buffer) => process.stderr.write(`[pi] ${chunk.toString()}`));
-    child.once("error", (error) => this.fail(new Error(`Could not start Pi RPC process: ${error.message}`)));
+    child.once("error", (error) => {
+      const failure = new Error(`Could not start Pi RPC process: ${error.message}`);
+      this.fail(failure);
+      if (!this.stopping) this.onFatal(failure);
+    });
     child.once("exit", (code, signal) => {
-      this.fail(new Error(`Pi RPC process exited (${signal ?? code ?? "unknown"})`));
+      const failure = new Error(`Pi RPC process exited (${signal ?? code ?? "unknown"})`);
+      this.fail(failure);
+      if (!this.stopping) this.onFatal(failure);
     });
     this.readJsonLines(child);
 
@@ -207,6 +215,7 @@ class PiRpc {
   }
 
   async stop(): Promise<void> {
+    this.stopping = true;
     const child = this.child;
     if (!child || child.exitCode !== null) return;
     child.kill("SIGTERM");
@@ -273,11 +282,44 @@ class PiRpc {
   }
 }
 
-pi = new PiRpc(config.workspace, config.agentDir);
+let fatalError: Error | undefined;
+pi = new PiRpc(config.workspace, config.agentDir, (error) => {
+  if (fatalError) return;
+  fatalError = error;
+  console.error(`[runtime] fatal: ${error.stack ?? error.message}`);
+  process.exitCode = 1;
+  shutdown.abort();
+});
 await pi.start();
 
 process.once("SIGTERM", () => void stop("SIGTERM"));
 process.once("SIGINT", () => void stop("SIGINT"));
 
+let readyCount = 0;
+let resolveReady!: () => void;
+const allReady = new Promise<void>((resolve) => { resolveReady = resolve; });
+const providerRun = Promise.all(providers.map(async (provider) => {
+  await provider.start(receive, shutdown.signal, () => {
+    readyCount += 1;
+    if (readyCount === providers.length) resolveReady();
+  });
+  if (!shutdown.signal.aborted) throw new Error(`${provider.name} transport stopped unexpectedly`);
+}));
+
+await Promise.race([allReady, providerRun]);
+if (fatalError) throw fatalError;
+await notifyReady(`${config.name} is online; ${providers.map((provider) => provider.name).join(", ")} started`);
 console.log(`[runtime] ${config.name} is online; ${providers.map((provider) => provider.name).join(", ")} started`);
-await Promise.all(providers.map((provider) => provider.start(receive, shutdown.signal)));
+await providerRun;
+
+async function notifyReady(status: string): Promise<void> {
+  if (!process.env.NOTIFY_SOCKET) return;
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn("systemd-notify", ["--ready", `--status=${status}`], { stdio: "inherit" });
+    child.once("error", reject);
+    child.once("exit", (code) => {
+      if (code === 0) resolve();
+      else reject(new Error(`systemd-notify exited with status ${code ?? "unknown"}`));
+    });
+  });
+}

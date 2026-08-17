@@ -20,7 +20,8 @@
   "files": [
     "dist",
     "scripts",
-    "README.md"
+    "README.md",
+    "npm-shrinkwrap.json"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -32,7 +33,7 @@
     "prepublishOnly": "npm run check && npm test"
   },
   "dependencies": {
-    "@earendil-works/pi-coding-agent": "^0.84.2"
+    "@earendil-works/pi-coding-agent": "0.84.2"
   },
   "devDependencies": {
     "@types/node": "^24.12.0",

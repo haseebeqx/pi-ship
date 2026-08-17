@@ -59,8 +59,15 @@ test("Slack only dispatches messages from the paired user", async () => {
   });
   const abort = new AbortController();
   const received: string[] = [];
-  const started = provider.start(async (message) => { received.push(message.senderId); }, abort.signal);
+  let ready = false;
+  const started = provider.start(
+    async (message) => { received.push(message.senderId); },
+    abort.signal,
+    () => { ready = true; },
+  );
 
+  await waitFor(() => ready);
+  assert.equal(ready, true);
   await waitFor(() => FakeWebSocket.latest !== undefined);
   const socket = FakeWebSocket.latest!;
   socket.emit(envelope({ type: "message", channel: "DM", channel_type: "im", user: "OWNER", text: "/pair SECRET" }));

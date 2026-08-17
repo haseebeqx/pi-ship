@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { randomBytes } from "node:crypto";
-import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -104,7 +104,7 @@ async function deploy(args: string[]): Promise<void> {
     const version = await localVersion(root);
     const install = `${remoteDir}/install.sh install ${remoteDir}/pi-ship.tgz ${remoteDir}/config.json ${remoteDir}/secrets.json ${shellQuote(version)}`;
     const elevate = `if [ \"$(id -u)\" = 0 ]; then bash ${install}; else sudo -n bash ${install}; fi`;
-    await run("ssh", sshArgs(connection, elevate));
+    await run("ssh", sshArgs(connection, withRemoteCleanup(remoteDir, elevate)));
     await saveServer(name, connection);
   } finally {
     await rm(temporary, { recursive: true, force: true });
@@ -160,7 +160,7 @@ async function update(args: string[]): Promise<void> {
     console.log(`Updating ${name} from ${installed} to ${available}...`);
     const install = `${remoteDir}/install.sh update ${remoteDir}/pi-ship.tgz ${shellQuote(available)} ${shellQuote(installed)}`;
     const elevate = `if [ \"$(id -u)\" = 0 ]; then bash ${install}; else sudo -n bash ${install}; fi`;
-    await run("ssh", sshArgs(connection, elevate));
+    await run("ssh", sshArgs(connection, withRemoteCleanup(remoteDir, elevate)));
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }
@@ -191,7 +191,7 @@ async function updatePi(args: string[]): Promise<void> {
   console.log(`Updating Pi on ${name} from ${installed} to ${available}...`);
   const install = `${remoteDir}/install.sh update-pi ${shellQuote(available)} ${shellQuote(installed)}`;
   const elevate = `if [ \"$(id -u)\" = 0 ]; then bash ${install}; else sudo -n bash ${install}; fi`;
-  await run("ssh", sshArgs(connection, elevate));
+  await run("ssh", sshArgs(connection, withRemoteCleanup(remoteDir, elevate)));
   console.log(`✓ ${name} has Pi ${available}`);
 }
 
@@ -248,7 +248,18 @@ async function localVersion(root: string): Promise<string> {
 }
 
 async function createArchive(root: string, archive: string): Promise<void> {
-  await run("tar", ["-czf", archive, "--exclude=node_modules", "--exclude=src", "--exclude=test", "-C", root, "package.json", "dist", "scripts", "README.md"]);
+  // npm package tarballs must contain a top-level `package/` directory.
+  const staging = await mkdtemp(join(tmpdir(), "pi-ship-package-"));
+  const packageDirectory = join(staging, "package");
+  try {
+    await mkdir(packageDirectory);
+    for (const entry of ["package.json", "npm-shrinkwrap.json", "dist", "scripts", "README.md"]) {
+      await cp(join(root, entry), join(packageDirectory, entry), { recursive: true });
+    }
+    await run("tar", ["-czf", archive, "-C", staging, "package"]);
+  } finally {
+    await rm(staging, { recursive: true, force: true });
+  }
 }
 
 function splitPiArgs(args: string[]): { shipArgs: string[]; piArgs: string[] } {
@@ -395,6 +406,11 @@ function sshArgs(connection: ServerConnection, ...args: string[]): string[] {
     connection.target,
     command,
   ];
+}
+
+function withRemoteCleanup(remoteDir: string, command: string): string {
+  const directory = shellQuote(remoteDir);
+  return `cleanup() { rm -rf -- ${directory}; }; trap cleanup EXIT HUP INT TERM; ${command}`;
 }
 
 function scpArgs(connection: ServerConnection, ...args: string[]): string[] {

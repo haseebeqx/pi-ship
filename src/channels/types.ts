@@ -19,7 +19,8 @@ export interface OutboundResponse {
 /** A communication provider transports messages; it knows nothing about Pi. */
 export interface CommunicationProvider {
   readonly name: string;
-  start(handler: MessageHandler, signal: AbortSignal): Promise<void>;
+  /** Runs the transport until aborted. Calls onReady after the first successful connection. */
+  start(handler: MessageHandler, signal: AbortSignal, onReady?: () => void): Promise<void>;
   send(conversationId: string, text: string, signal?: AbortSignal): Promise<void>;
   /** Providers can implement this to edit/stream a response in real time. */
   openResponse?(message: IncomingMessage, signal: AbortSignal): Promise<OutboundResponse>;

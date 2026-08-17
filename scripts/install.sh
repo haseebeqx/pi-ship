@@ -9,6 +9,14 @@ if [[ $(id -u) -ne 0 ]]; then
   exit 1
 fi
 
+# Updates replace shared paths and restart one service; concurrent installers would
+# corrupt app.old or activate a release built from stale version state.
+exec 9>/run/lock/pi-ship-install.lock
+if ! flock -n 9; then
+  echo "another Pi Ship install or update is already running" >&2
+  exit 1
+fi
+
 install_runtime() {
   local archive=$1
   local destination=$2
@@ -46,6 +54,26 @@ write_pi_version() {
   mv /opt/pi-ship/pi-version.tmp /opt/pi-ship/pi-version
 }
 
+migrate_service_readiness() {
+  local unit=/etc/systemd/system/pi-ship.service
+  [[ -f $unit ]] || return 0
+  if grep -q '^Type=simple$' "$unit"; then
+    SERVICE_WAS_SIMPLE=yes
+    sed -i 's/^Type=simple$/Type=notify\nNotifyAccess=all/' "$unit"
+  fi
+  if ! grep -q '^TimeoutStartSec=' "$unit"; then
+    sed -i '/^RestartSec=/a TimeoutStartSec=60s' "$unit"
+  fi
+  systemctl daemon-reload
+}
+
+restore_service_readiness() {
+  [[ ${SERVICE_WAS_SIMPLE:-no} == yes ]] || return 0
+  local unit=/etc/systemd/system/pi-ship.service
+  sed -i '/^NotifyAccess=all$/d; /^TimeoutStartSec=60s$/d; s/^Type=notify$/Type=simple/' "$unit"
+  systemctl daemon-reload
+}
+
 install_pi_version() {
   local destination=$1
   local version=$2
@@ -81,36 +109,49 @@ if [[ $MODE == update-pi ]]; then
 
   staging=$(mktemp -d /opt/pi-ship/app.new.XXXXXX)
   old=/opt/pi-ship/app.old
-  trap 'rm -rf "$staging"' EXIT
+  PERSISTENT=no
+  SERVICE_WAS_SIMPLE=no
+  ACTIVATION_STATE=none
+  rollback_update_pi() {
+    local status=$?
+    if [[ $status -ne 0 ]]; then
+      if [[ $PERSISTENT == yes && $ACTIVATION_STATE != none ]]; then systemctl stop pi-ship.service || true; fi
+      if [[ $ACTIVATION_STATE == swapped ]]; then rm -rf /opt/pi-ship/app; fi
+      if [[ $ACTIVATION_STATE != none && -e $old ]]; then mv "$old" /opt/pi-ship/app; fi
+      restore_service_readiness
+      if [[ $PERSISTENT == yes ]]; then systemctl restart pi-ship.service || true; fi
+    fi
+    rm -rf "$staging"
+    exit "$status"
+  }
+  trap rollback_update_pi EXIT
+  trap 'exit 1' HUP INT TERM
   cp -a /opt/pi-ship/app/. "$staging/"
   install_pi_version "$staging" "$VERSION"
 
+  migrate_service_readiness
   PERSISTENT=$(/opt/pi-ship/node/bin/node -e 'const c=require(process.argv[1]); process.stdout.write(c.telegram || c.slack ? "yes" : "no")' /etc/pi-ship/config.json)
   if [[ $PERSISTENT == yes ]]; then
     systemctl stop pi-ship.service
   fi
   rm -rf "$old"
   mv /opt/pi-ship/app "$old"
+  ACTIVATION_STATE=old-moved
   mv "$staging" /opt/pi-ship/app
+  ACTIVATION_STATE=swapped
 
-  if [[ $PERSISTENT == no ]]; then
-    write_pi_version "$VERSION"
-    rm -rf "$old" "$(dirname "$0")"
-    echo "Pi updated successfully to $VERSION"
-    exit 0
+  if [[ $PERSISTENT == yes ]]; then
+    if ! systemctl start pi-ship.service; then
+      echo "updated Pi failed to report ready; restoring version $EXPECTED_VERSION" >&2
+      false
+    fi
   fi
-  if systemctl start pi-ship.service && sleep 2 && systemctl is-active --quiet pi-ship.service; then
-    write_pi_version "$VERSION"
-    rm -rf "$old" "$(dirname "$0")"
-    echo "Pi updated successfully to $VERSION"
-    exit 0
-  fi
-
-  echo "updated Pi failed to start; restoring version $EXPECTED_VERSION" >&2
-  rm -rf /opt/pi-ship/app
-  mv "$old" /opt/pi-ship/app
-  systemctl restart pi-ship.service
-  exit 1
+  write_pi_version "$VERSION"
+  ACTIVATION_STATE=none
+  trap - EXIT HUP INT TERM
+  rm -rf "$old" "$(dirname "$0")"
+  echo "Pi updated successfully to $VERSION"
+  exit 0
 fi
 
 if [[ $MODE == update ]]; then
@@ -129,7 +170,23 @@ if [[ $MODE == update ]]; then
 
   staging=$(mktemp -d /opt/pi-ship/app.new.XXXXXX)
   old=/opt/pi-ship/app.old
-  trap 'rm -rf "$staging"' EXIT
+  PERSISTENT=no
+  SERVICE_WAS_SIMPLE=no
+  ACTIVATION_STATE=none
+  rollback_update() {
+    local status=$?
+    if [[ $status -ne 0 ]]; then
+      if [[ $PERSISTENT == yes && $ACTIVATION_STATE != none ]]; then systemctl stop pi-ship.service || true; fi
+      if [[ $ACTIVATION_STATE == swapped ]]; then rm -rf /opt/pi-ship/app; fi
+      if [[ $ACTIVATION_STATE != none && -e $old ]]; then mv "$old" /opt/pi-ship/app; fi
+      restore_service_readiness
+      if [[ $PERSISTENT == yes ]]; then systemctl restart pi-ship.service || true; fi
+    fi
+    rm -rf "$staging"
+    exit "$status"
+  }
+  trap rollback_update EXIT
+  trap 'exit 1' HUP INT TERM
   install_runtime "$ARCHIVE" "$staging" "$VERSION"
   if [[ -f /opt/pi-ship/pi-version ]]; then
     PI_VERSION=$(< /opt/pi-ship/pi-version)
@@ -137,32 +194,29 @@ if [[ $MODE == update ]]; then
     install_pi_version "$staging" "$PI_VERSION"
   fi
 
+  migrate_service_readiness
   PERSISTENT=$(/opt/pi-ship/node/bin/node -e 'const c=require(process.argv[1]); process.stdout.write(c.telegram || c.slack ? "yes" : "no")' /etc/pi-ship/config.json)
   if [[ $PERSISTENT == yes ]]; then
     systemctl stop pi-ship.service
   fi
   rm -rf "$old"
   mv /opt/pi-ship/app "$old"
+  ACTIVATION_STATE=old-moved
   mv "$staging" /opt/pi-ship/app
+  ACTIVATION_STATE=swapped
 
-  if [[ $PERSISTENT == no ]]; then
-    write_version "$VERSION"
-    rm -rf "$old" "$(dirname "$ARCHIVE")"
-    echo "Pi Ship updated successfully to $VERSION"
-    exit 0
+  if [[ $PERSISTENT == yes ]]; then
+    if ! systemctl start pi-ship.service; then
+      echo "updated runtime failed to report ready; restoring previous version" >&2
+      false
+    fi
   fi
-  if systemctl start pi-ship.service && sleep 2 && systemctl is-active --quiet pi-ship.service; then
-    write_version "$VERSION"
-    rm -rf "$old" "$(dirname "$ARCHIVE")"
-    echo "Pi Ship updated successfully to $VERSION"
-    exit 0
-  fi
-
-  echo "updated runtime failed to start; restoring previous version" >&2
-  rm -rf /opt/pi-ship/app
-  mv "$old" /opt/pi-ship/app
-  systemctl restart pi-ship.service
-  exit 1
+  write_version "$VERSION"
+  ACTIVATION_STATE=none
+  trap - EXIT HUP INT TERM
+  rm -rf "$old" "$(dirname "$ARCHIVE")"
+  echo "Pi Ship updated successfully to $VERSION"
+  exit 0
 fi
 
 if [[ $MODE != install ]]; then
@@ -227,7 +281,8 @@ After=network-online.target
 Wants=network-online.target
 
 [Service]
-Type=simple
+Type=notify
+NotifyAccess=all
 User=pi-ship
 Group=pi-ship
 WorkingDirectory=/var/lib/pi-ship/workspace
@@ -238,6 +293,7 @@ Environment=PI_SHIP_SECRETS=/etc/pi-ship/secrets.json
 ExecStart=/opt/pi-ship/app/bin/pi-ship-runtime
 Restart=on-failure
 RestartSec=5s
+TimeoutStartSec=60s
 TimeoutStopSec=30s
 UMask=0077
 NoNewPrivileges=yes

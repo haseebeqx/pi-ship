@@ -35,15 +35,20 @@ export class TelegramProvider implements CommunicationProvider {
     this.store = new PairingStore(options.statePath);
   }
 
-  async start(handler: MessageHandler, signal: AbortSignal): Promise<void> {
+  async start(handler: MessageHandler, signal: AbortSignal, onReady?: () => void): Promise<void> {
     await this.store.load();
+    let ready = false;
     while (!signal.aborted) {
       try {
         const updates = await this.call<TelegramUpdate[]>("getUpdates", {
           offset: this.offset,
-          timeout: 30,
+          timeout: ready ? 30 : 0,
           allowed_updates: ["message"],
         }, signal);
+        if (!ready) {
+          ready = true;
+          onReady?.();
+        }
         for (const update of updates) {
           this.offset = Math.max(this.offset, update.update_id + 1);
           await this.handleUpdate(update, handler, signal);

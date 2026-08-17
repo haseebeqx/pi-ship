@@ -52,16 +52,21 @@ export class SlackProvider implements CommunicationProvider {
     if (!this.WebSocketClass) throw new Error("This Node.js runtime does not provide WebSocket support");
   }
 
-  async start(handler: MessageHandler, signal: AbortSignal): Promise<void> {
+  async start(handler: MessageHandler, signal: AbortSignal, onReady?: () => void): Promise<void> {
     await this.store.load();
     const auth = await this.call("auth.test", {}, this.options.botToken, signal);
     this.botUserId = auth.user_id ?? "";
+    let ready = false;
 
     while (!signal.aborted) {
       try {
         const connection = await this.call("apps.connections.open", {}, this.options.appToken, signal);
         if (!connection.url) throw new Error("Slack did not return a Socket Mode URL");
-        await this.consume(connection.url, handler, signal);
+        await this.consume(connection.url, handler, signal, () => {
+          if (ready) return;
+          ready = true;
+          onReady?.();
+        });
       } catch (error) {
         if (signal.aborted) return;
         console.error(`[slack] ${(error as Error).message}`);
@@ -117,14 +122,22 @@ export class SlackProvider implements CommunicationProvider {
     });
   }
 
-  private consume(url: string, handler: MessageHandler, signal: AbortSignal): Promise<void> {
+  private consume(
+    url: string,
+    handler: MessageHandler,
+    signal: AbortSignal,
+    onOpen: () => void,
+  ): Promise<void> {
     return new Promise((resolve, reject) => {
       const socket = new this.WebSocketClass(url);
       let opened = false;
       const abort = () => socket.close();
       signal.addEventListener("abort", abort, { once: true });
 
-      socket.addEventListener("open", () => { opened = true; });
+      socket.addEventListener("open", () => {
+        opened = true;
+        onOpen();
+      });
       socket.addEventListener("message", (raw) => {
         void this.handleEnvelope(String(raw.data), socket, handler).catch((error) => {
           console.error(`[slack] event failed: ${(error as Error).message}`);
