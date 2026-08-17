@@ -10,11 +10,36 @@ Responses stream in real time by creating provider messages and updating them as
 
 Requires Node.js 22.19 or newer on your local machine, plus SSH access to an Ubuntu or Debian server whose user has passwordless `sudo`.
 
+### Interactive setup (recommended)
+
 ```bash
-npx --yes pi-ship@latest deploy ubuntu@your-server --name my-pi
+npx --yes pi-ship@latest deploy
 ```
 
-Nothing needs to be installed globally. The setup asks for a model API key and Telegram bot token without echoing them. For automation, use `PI_SHIP_MODEL_API_KEY` and `PI_SHIP_TELEGRAM_TOKEN`.
+**That is the only command you need.** Pi Ship interactively asks for every required option, offers sensible defaults, and hides credentials as you type them. Nothing needs to be installed globally.
+
+If SSH requires an identity file, include the optional certificate argument and Pi Ship will ask for everything else:
+
+```bash
+npx --yes pi-ship@latest deploy --certificate ~/.ssh/server.pem
+```
+
+### Non-interactive setup
+
+For automation, provide every option explicitly:
+
+```bash
+npx --yes pi-ship@latest deploy \
+  --server ubuntu@your-server \
+  --certificate ~/.ssh/server.pem \
+  --name my-pi \
+  --provider anthropic \
+  --model-api-key "$ANTHROPIC_API_KEY" \
+  --channel telegram \
+  --telegram-bot-token "$TELEGRAM_BOT_TOKEN"
+```
+
+A certificate supplied during deployment is saved with the named server for later commands. API keys and bot tokens can also be supplied through `PI_SHIP_MODEL_API_KEY`, `PI_SHIP_TELEGRAM_TOKEN`, `PI_SHIP_SLACK_BOT_TOKEN`, and `PI_SHIP_SLACK_APP_TOKEN`. Be aware that secrets passed directly on the command line may be visible to other local processes while the command runs.
 
 After deployment, send the displayed pairing command to the Telegram bot:
 
@@ -35,21 +60,29 @@ Create a Slack app, enable **Socket Mode**, and create an app-level token (`xapp
 Subscribe to the `app_mention` and `message.im` bot events, install the app to the workspace, then deploy:
 
 ```bash
-npx --yes pi-ship@latest deploy ubuntu@your-server --name my-pi --channel slack
+npx --yes pi-ship@latest deploy \
+  --server ubuntu@your-server \
+  --certificate ~/.ssh/server.pem \
+  --name my-pi \
+  --provider anthropic \
+  --model-api-key "$ANTHROPIC_API_KEY" \
+  --channel slack \
+  --slack-bot-token "$SLACK_BOT_TOKEN" \
+  --slack-app-token "$SLACK_APP_TOKEN"
 ```
 
-Enter the bot token (`xoxb-`) and app token (`xapp-`) when prompted. For automation, use `PI_SHIP_SLACK_BOT_TOKEN` and `PI_SHIP_SLACK_APP_TOKEN`. Deployment prints a one-time pairing code. Send `/pair CODE` to the app in a **direct message**; the code is never accepted in a public channel. After pairing, only that Slack user can invoke Pi through direct messages or channel mentions. Channel replies use threads.
+The bot token must begin with `xoxb-` and the Socket Mode app token with `xapp-`. Deployment prints a one-time pairing code. Send `/pair CODE` to the app in a **direct message**; the code is never accepted in a public channel. After pairing, only that Slack user can invoke Pi through direct messages or channel mentions. Channel replies use threads.
 
 ## Commands
 
 ```bash
-npx --yes pi-ship@latest deploy user@server
-npx --yes pi-ship@latest status my-pi
-npx --yes pi-ship@latest update my-pi
-npx --yes pi-ship@latest logs my-pi
+npx --yes pi-ship@latest deploy --server user@server --name my-pi --provider anthropic --model-api-key <key> --channel telegram --telegram-bot-token <token> [--certificate <path>]
+npx --yes pi-ship@latest status --server my-pi
+npx --yes pi-ship@latest update --server my-pi
+npx --yes pi-ship@latest logs --server my-pi
 ```
 
-If installed globally, the same commands are available as `pi-ship`.
+If installed globally, the same commands are available as `pi-ship`. Required options that are omitted are requested interactively. In non-interactive environments, supply them as flags or credential environment variables.
 
 `status` reports the runtime version recorded on the server. `update` compares that version with the version of the local `pi-ship` package, and only uploads, installs, and restarts the runtime when the local version is newer. Configuration, credentials, workspace data, and agent state are preserved.
 
@@ -68,12 +101,46 @@ Pi plugins execute arbitrary code and can access the Pi user's workspace and cre
 
 ## Development
 
+Install dependencies and run the full local verification suite:
+
 ```bash
 npm install
 npm run check
 npm test
 npm run build
 ```
+
+The tests use mocked Telegram and Slack transports, so they do not require API keys, bot tokens, or a server. To run one test file while developing:
+
+```bash
+node --import tsx --test test/telegram.test.ts
+```
+
+To exercise the CLI directly from the TypeScript source without installing it globally, pass arguments after `--`:
+
+```bash
+npm run dev -- --help
+npm run dev -- status --server my-pi
+```
+
+For an end-to-end deployment test, use a disposable Ubuntu or Debian server. Build first because deployment packages the compiled `dist` directory, then run the development CLI with the same options as the published command:
+
+```bash
+npm run build
+npm run dev -- deploy \
+  --server ubuntu@your-test-server \
+  --certificate ~/.ssh/test-server.pem \
+  --name dev-pi \
+  --provider anthropic \
+  --model-api-key "$ANTHROPIC_API_KEY" \
+  --channel telegram \
+  --telegram-bot-token "$TELEGRAM_BOT_TOKEN"
+
+npm run dev -- status --server dev-pi
+npm run dev -- logs --server dev-pi
+```
+
+The remote test performs a real system-level installation and requires passwordless `sudo`. Rebuild after source changes. To test the `update` path, increase the semver version in `package.json`; updates are intentionally skipped unless the local version is newer than the installed version.
 
 Communication providers implement `CommunicationProvider` in `src/channels/types.ts`. `openResponse()` is the streaming boundary: providers receive ordered text deltas and can create/edit messages using their native APIs. Providers without realtime updates automatically buffer and send the final response. Telegram and Slack both use rate-limited message edits; the agent runtime remains independent of either API.
 

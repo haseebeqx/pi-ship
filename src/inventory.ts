@@ -2,11 +2,12 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
-interface ServerRecord {
+export interface ServerConnection {
   target: string;
+  certificate?: string;
 }
 
-type Inventory = Record<string, ServerRecord>;
+type Inventory = Record<string, ServerConnection>;
 
 const inventoryPath = join(homedir(), ".config", "pi-ship", "servers.json");
 
@@ -19,16 +20,20 @@ async function readInventory(): Promise<Inventory> {
   }
 }
 
-export async function saveServer(name: string, target: string): Promise<void> {
+export async function saveServer(name: string, connection: ServerConnection): Promise<void> {
   const inventory = await readInventory();
-  inventory[name] = { target };
+  inventory[name] = connection;
   await mkdir(dirname(inventoryPath), { recursive: true });
   const temporary = `${inventoryPath}.tmp`;
   await writeFile(temporary, `${JSON.stringify(inventory, null, 2)}\n`, { mode: 0o600 });
   await rename(temporary, inventoryPath);
 }
 
-export async function resolveServer(nameOrTarget: string): Promise<string> {
+export async function resolveServer(nameOrTarget: string, certificate?: string): Promise<ServerConnection> {
   const inventory = await readInventory();
-  return inventory[nameOrTarget]?.target ?? nameOrTarget;
+  const saved = inventory[nameOrTarget];
+  return {
+    target: saved?.target ?? nameOrTarget,
+    certificate: certificate ?? saved?.certificate,
+  };
 }

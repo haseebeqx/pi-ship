@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { createInterface, emitKeypressEvents } from "node:readline";
 import { hashPairingCode } from "./pairing.js";
 import { resolveServer, saveServer } from "./inventory.js";
+import type { ServerConnection } from "./inventory.js";
 import { run, shellQuote } from "./process.js";
 import { compareVersions, validateVersion } from "./version.js";
 import type { ShipConfig, ShipSecrets } from "./config.js";
@@ -30,17 +31,27 @@ try {
 }
 
 async function deploy(args: string[]): Promise<void> {
-  const target = positional(args, 0) ?? await prompt("SSH server (user@host): ");
-  const name = option(args, "--name") ?? (await prompt("Name this Pi [my-pi]: ") || "my-pi");
+  const options = parseOptions(args, [
+    "--server", "--certificate", "--name", "--provider", "--model-api-key", "--channel",
+    "--telegram-bot-token", "--slack-bot-token", "--slack-app-token",
+  ]);
+  const target = await required(options, "--server", "SSH server (user@host): ");
+  const certificate = options.get("--certificate");
+  const name = await required(options, "--name", "Name this Pi", { defaultValue: "my-pi" });
   if (!/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,31}$/.test(name)) {
     throw new Error("The name must contain only letters, numbers, _ or -, and be at most 32 characters.");
   }
 
-  const providerInput = option(args, "--provider") ?? (await prompt("Model provider [anthropic/openai/google] (anthropic): ") || "anthropic");
+  const providerInput = await required(options, "--provider", "Model provider (anthropic/openai/google)", { defaultValue: "anthropic" });
   if (!isProvider(providerInput)) throw new Error(`Unsupported model provider: ${providerInput}`);
-  const modelApiKey = process.env.PI_SHIP_MODEL_API_KEY ?? await promptSecret(`${providerInput} API key: `);
-  const channel = option(args, "--channel") ?? (await prompt("Communication channel [telegram/slack] (telegram): ") || "telegram");
+  const modelApiKey = options.get("--model-api-key") ?? process.env.PI_SHIP_MODEL_API_KEY
+    ?? await required(options, "--model-api-key", `${providerInput} API key: `, { secret: true });
+  const channel = await required(options, "--channel", "Communication channel (telegram/slack)", { defaultValue: "telegram" });
   if (channel !== "telegram" && channel !== "slack") throw new Error(`Unsupported communication channel: ${channel}`);
+  const connection: ServerConnection = {
+    target,
+    certificate: certificate ? resolve(certificate) : undefined,
+  };
 
   const pairingCode = randomBytes(5).toString("hex").toUpperCase();
   const config: ShipConfig = {
@@ -52,17 +63,18 @@ async function deploy(args: string[]): Promise<void> {
     model: { provider: providerInput, apiKey: modelApiKey },
   };
   if (channel === "telegram") {
-    const botToken = process.env.PI_SHIP_TELEGRAM_TOKEN ?? await promptSecret("Telegram bot token: ");
-    if (!modelApiKey || !botToken) throw new Error("Model and Telegram credentials are required.");
+    const botToken = options.get("--telegram-bot-token") ?? process.env.PI_SHIP_TELEGRAM_TOKEN
+      ?? await required(options, "--telegram-bot-token", "Telegram bot token: ", { secret: true });
     config.telegram = {
       pairingCodeHash: hashPairingCode(pairingCode),
       statePath: "/var/lib/pi-ship/telegram-state.json",
     };
     secrets.telegram = { botToken };
   } else {
-    const botToken = process.env.PI_SHIP_SLACK_BOT_TOKEN ?? await promptSecret("Slack bot token (xoxb-): ");
-    const appToken = process.env.PI_SHIP_SLACK_APP_TOKEN ?? await promptSecret("Slack Socket Mode app token (xapp-): ");
-    if (!modelApiKey || !botToken || !appToken) throw new Error("Model and Slack credentials are required.");
+    const botToken = options.get("--slack-bot-token") ?? process.env.PI_SHIP_SLACK_BOT_TOKEN
+      ?? await required(options, "--slack-bot-token", "Slack bot token (xoxb-): ", { secret: true });
+    const appToken = options.get("--slack-app-token") ?? process.env.PI_SHIP_SLACK_APP_TOKEN
+      ?? await required(options, "--slack-app-token", "Slack Socket Mode app token (xapp-): ", { secret: true });
     config.slack = {
       socketMode: true,
       pairingCodeHash: hashPairingCode(pairingCode),
@@ -85,15 +97,15 @@ async function deploy(args: string[]): Promise<void> {
     await createArchive(root, archive);
 
     const remoteDir = `/tmp/pi-ship-${randomBytes(6).toString("hex")}`;
-    await run("ssh", [target, `install -d -m 700 ${shellQuote(remoteDir)}`]);
-    await run("scp", [archive, configFile, secretsFile, join(root, "scripts", "install.sh"), `${target}:${remoteDir}/`]);
+    await run("ssh", sshArgs(connection, `install -d -m 700 ${shellQuote(remoteDir)}`));
+    await run("scp", scpArgs(connection, archive, configFile, secretsFile, join(root, "scripts", "install.sh"), `${target}:${remoteDir}/`));
 
     console.log("Installing and securing Pi on the server...");
     const version = await localVersion(root);
     const install = `${remoteDir}/install.sh install ${remoteDir}/pi-ship.tgz ${remoteDir}/config.json ${remoteDir}/secrets.json ${shellQuote(version)}`;
     const elevate = `if [ \"$(id -u)\" = 0 ]; then bash ${install}; else sudo -n bash ${install}; fi`;
-    await run("ssh", [target, elevate]);
-    await saveServer(name, target);
+    await run("ssh", sshArgs(connection, elevate));
+    await saveServer(name, connection);
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }
@@ -111,12 +123,13 @@ async function deploy(args: string[]): Promise<void> {
 }
 
 async function update(args: string[]): Promise<void> {
-  const name = positional(args, 0);
-  if (!name) throw new Error("Usage: pi-ship update <name-or-user@host>");
-  const target = await resolveServer(name);
+  const options = parseOptions(args, ["--server", "--certificate"]);
+  const name = await required(options, "--server", "Server (saved name or user@host): ");
+  const connection = await resolveServer(name, certificateOption(options));
+  const { target } = connection;
   const root = packageRoot();
   const available = await localVersion(root);
-  const installed = (await run("ssh", [target, "cat /opt/pi-ship/version"], { capture: true })).trim();
+  const installed = (await run("ssh", sshArgs(connection, "cat /opt/pi-ship/version"), { capture: true })).trim();
 
   if (compareVersions(available, installed) <= 0) {
     console.log(`No update needed: server has ${installed}, local runtime is ${available}.`);
@@ -128,12 +141,12 @@ async function update(args: string[]): Promise<void> {
     const archive = join(temporary, "pi-ship.tgz");
     await createArchive(root, archive);
     const remoteDir = `/tmp/pi-ship-${randomBytes(6).toString("hex")}`;
-    await run("ssh", [target, `install -d -m 700 ${shellQuote(remoteDir)}`]);
-    await run("scp", [archive, join(root, "scripts", "install.sh"), `${target}:${remoteDir}/`]);
+    await run("ssh", sshArgs(connection, `install -d -m 700 ${shellQuote(remoteDir)}`));
+    await run("scp", scpArgs(connection, archive, join(root, "scripts", "install.sh"), `${target}:${remoteDir}/`));
     console.log(`Updating ${name} from ${installed} to ${available}...`);
     const install = `${remoteDir}/install.sh update ${remoteDir}/pi-ship.tgz ${shellQuote(available)} ${shellQuote(installed)}`;
     const elevate = `if [ \"$(id -u)\" = 0 ]; then bash ${install}; else sudo -n bash ${install}; fi`;
-    await run("ssh", [target, elevate]);
+    await run("ssh", sshArgs(connection, elevate));
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }
@@ -141,33 +154,39 @@ async function update(args: string[]): Promise<void> {
 }
 
 async function status(args: string[]): Promise<void> {
-  const name = positional(args, 0);
-  if (!name) throw new Error("Usage: pi-ship status <name-or-user@host>");
-  const target = await resolveServer(name);
-  const output = await run("ssh", [target, "printf 'Runtime version: '; cat /opt/pi-ship/version && sudo -n systemctl is-active pi-ship.service && sudo -n systemctl --no-pager --full status pi-ship.service | head -n 12"], { capture: true });
+  const options = parseOptions(args, ["--server", "--certificate"]);
+  const server = await required(options, "--server", "Server (saved name or user@host): ");
+  const connection = await resolveServer(server, certificateOption(options));
+  const output = await run("ssh", sshArgs(connection, "printf 'Runtime version: '; cat /opt/pi-ship/version && sudo -n systemctl is-active pi-ship.service && sudo -n systemctl --no-pager --full status pi-ship.service | head -n 12"), { capture: true });
   process.stdout.write(output);
 }
 
 async function logs(args: string[]): Promise<void> {
-  const name = positional(args, 0);
-  if (!name) throw new Error("Usage: pi-ship logs <name-or-user@host>");
-  const target = await resolveServer(name);
-  await run("ssh", ["-t", target, "sudo -n journalctl -u pi-ship.service -n 100 -f"]);
+  const options = parseOptions(args, ["--server", "--certificate"]);
+  const server = await required(options, "--server", "Server (saved name or user@host): ");
+  const connection = await resolveServer(server, certificateOption(options));
+  await run("ssh", sshArgs(connection, "-t", "sudo -n journalctl -u pi-ship.service -n 100 -f"));
 }
 
 function printHelp(): void {
   console.log(`pi-ship
 
-  deploy [user@host]   Install an always-running Pi with Telegram or Slack
-  update <name>        Install the local runtime when it is newer than the server
-  status <name>        Show the runtime version and whether Pi is online
-  logs <name>          Follow Pi's logs
+  deploy --server <user@host> --name <name> --provider <provider>
+         --model-api-key <key> --channel <telegram|slack> [channel credentials]
+         [--certificate <path>]
+  update --server <name-or-user@host> [--certificate <path>]
+  status --server <name-or-user@host> [--certificate <path>]
+  logs   --server <name-or-user@host> [--certificate <path>]
 
-Credentials can be supplied non-interactively through:
-  PI_SHIP_MODEL_API_KEY
-  PI_SHIP_TELEGRAM_TOKEN
-  PI_SHIP_SLACK_BOT_TOKEN
-  PI_SHIP_SLACK_APP_TOKEN`);
+Deploy channel credentials:
+  Telegram: --telegram-bot-token <token>
+  Slack:    --slack-bot-token <token> --slack-app-token <token>
+
+Missing required options are prompted for when running in a terminal.
+Credentials may also be supplied through PI_SHIP_MODEL_API_KEY,
+PI_SHIP_TELEGRAM_TOKEN, PI_SHIP_SLACK_BOT_TOKEN, and PI_SHIP_SLACK_APP_TOKEN.
+The certificate is used as the SSH identity file. A certificate supplied during
+deploy is saved with the named server for later update, status, and logs calls.`);
 }
 
 function packageRoot(): string {
@@ -185,17 +204,54 @@ async function createArchive(root: string, archive: string): Promise<void> {
   await run("tar", ["-czf", archive, "--exclude=node_modules", "--exclude=src", "--exclude=test", "-C", root, "package.json", "dist", "scripts", "README.md"]);
 }
 
-function option(args: string[], name: string): string | undefined {
-  const index = args.indexOf(name);
-  return index >= 0 ? args[index + 1] : undefined;
+function parseOptions(args: string[], allowed: string[]): Map<string, string> {
+  const options = new Map<string, string>();
+  const seen = new Set<string>();
+  for (let index = 0; index < args.length;) {
+    const name = args[index];
+    if (!name?.startsWith("--")) throw new Error(`Unexpected positional argument: ${name}`);
+    if (!allowed.includes(name)) throw new Error(`Unknown option: ${name}`);
+    if (seen.has(name)) throw new Error(`Option supplied more than once: ${name}`);
+    seen.add(name);
+
+    const value = args[index + 1];
+    if (value !== undefined && !value.startsWith("--")) {
+      options.set(name, value);
+      index += 2;
+    } else {
+      // A valueless known option is treated like an omitted option and prompted for.
+      index += 1;
+    }
+  }
+  return options;
 }
 
-function positional(args: string[], index: number): string | undefined {
-  return args.filter((arg, i) => !arg.startsWith("--") && (i === 0 || !args[i - 1]?.startsWith("--")))[index];
+interface PromptOptions {
+  defaultValue?: string;
+  secret?: boolean;
 }
 
-function isProvider(value: string): value is ShipSecrets["model"]["provider"] {
-  return value === "anthropic" || value === "openai" || value === "google";
+async function required(
+  options: Map<string, string>,
+  name: string,
+  question: string,
+  promptOptions: PromptOptions = {},
+): Promise<string> {
+  const supplied = options.get(name);
+  if (supplied) return supplied;
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    throw new Error(`Missing required option: ${name} (cannot prompt without a terminal)`);
+  }
+
+  const suffix = promptOptions.defaultValue ? ` [${promptOptions.defaultValue}]: ` : question.endsWith(" ") ? "" : ": ";
+  while (true) {
+    const answer = promptOptions.secret
+      ? await promptSecret(question)
+      : await prompt(`${question}${suffix}`);
+    const value = answer || promptOptions.defaultValue;
+    if (value) return value;
+    console.log(`Please enter a value for ${name}.`);
+  }
 }
 
 async function prompt(question: string): Promise<string> {
@@ -207,32 +263,57 @@ async function prompt(question: string): Promise<string> {
 }
 
 async function promptSecret(question: string): Promise<string> {
-  if (!process.stdin.isTTY) throw new Error(`Cannot prompt for ${question.trim()} without a terminal; use environment variables.`);
   process.stdout.write(question);
   emitKeypressEvents(process.stdin);
   process.stdin.setRawMode?.(true);
   process.stdin.resume();
-  return new Promise((resolveSecret, reject) => {
+
+  return new Promise((resolvePrompt, reject) => {
     let value = "";
+    const cleanup = () => {
+      process.stdin.off("keypress", onKey);
+      process.stdin.setRawMode?.(false);
+      process.stdin.pause();
+    };
     const onKey = (text: string, key: { name?: string; ctrl?: boolean }) => {
-      if (key.ctrl && key.name === "c") {
+      if (key.ctrl && (key.name === "c" || key.name === "d")) {
         cleanup();
+        process.stdout.write("\n");
         reject(new Error("Cancelled"));
       } else if (key.name === "return" || key.name === "enter") {
         cleanup();
         process.stdout.write("\n");
-        resolveSecret(value);
+        resolvePrompt(value.trim());
       } else if (key.name === "backspace") {
         value = value.slice(0, -1);
       } else if (!key.ctrl && text && !/^\u001b/.test(text)) {
         value += text;
       }
     };
-    const cleanup = () => {
-      process.stdin.off("keypress", onKey);
-      process.stdin.setRawMode?.(false);
-      process.stdin.pause();
-    };
     process.stdin.on("keypress", onKey);
   });
+}
+
+function certificateOption(options: Map<string, string>): string | undefined {
+  const certificate = options.get("--certificate");
+  return certificate ? resolve(certificate) : undefined;
+}
+
+function sshArgs(connection: ServerConnection, ...args: string[]): string[] {
+  const command = args.at(-1);
+  if (command === undefined) throw new Error("SSH command is required");
+  return [
+    ...(connection.certificate ? ["-i", connection.certificate] : []),
+    ...args.slice(0, -1),
+    connection.target,
+    command,
+  ];
+}
+
+function scpArgs(connection: ServerConnection, ...args: string[]): string[] {
+  return [...(connection.certificate ? ["-i", connection.certificate] : []), ...args];
+}
+
+function isProvider(value: string): value is ShipSecrets["model"]["provider"] {
+  return value === "anthropic" || value === "openai" || value === "google";
 }
