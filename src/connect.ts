@@ -2,13 +2,10 @@
 import { spawn } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { exposeModelCredential, loadJson, type ShipConfig, type ShipSecrets } from "./config.js";
+import { loadJson, type ShipConfig } from "./config.js";
 
 const configPath = process.env.PI_SHIP_CONFIG ?? "/etc/pi-ship/config.json";
-const secretsPath = process.env.PI_SHIP_SECRETS ?? "/etc/pi-ship/secrets.json";
 const config = await loadJson<ShipConfig>(configPath);
-const secrets = await loadJson<ShipSecrets>(secretsPath);
-exposeModelCredential(secrets);
 
 await mkdir(config.workspace, { recursive: true });
 await mkdir(config.agentDir, { recursive: true });
@@ -18,7 +15,6 @@ const cliPath = fileURLToPath(new URL("cli.js", piModule));
 const child = spawn(process.execPath, [
   cliPath,
   "--no-session",
-  "--provider", secrets.model.provider,
   "--approve",
 ], {
   cwd: config.workspace,

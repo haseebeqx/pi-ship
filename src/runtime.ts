@@ -8,13 +8,12 @@ import { StringDecoder } from "node:string_decoder";
 import { SlackProvider } from "./channels/slack.js";
 import { TelegramProvider } from "./channels/telegram.js";
 import { bufferedResponse, type CommunicationProvider, type IncomingMessage, type OutboundResponse } from "./channels/types.js";
-import { exposeModelCredential, loadJson, type ShipConfig, type ShipSecrets } from "./config.js";
+import { loadJson, type ShipConfig, type ShipSecrets } from "./config.js";
 
 const configPath = process.env.PI_SHIP_CONFIG ?? "/etc/pi-ship/config.json";
 const secretsPath = process.env.PI_SHIP_SECRETS ?? "/etc/pi-ship/secrets.json";
 const config = await loadJson<ShipConfig>(configPath);
 const secrets = await loadJson<ShipSecrets>(secretsPath);
-exposeModelCredential(secrets);
 
 await mkdir(config.workspace, { recursive: true });
 await mkdir(config.agentDir, { recursive: true });
@@ -143,7 +142,6 @@ class PiRpc {
   constructor(
     private readonly cwd: string,
     private readonly agentDir: string,
-    private readonly provider: string,
   ) {}
 
   async start(): Promise<void> {
@@ -156,7 +154,6 @@ class PiRpc {
       "--continue",
       // Match SessionManager.continueRecent() from the former in-process runtime.
       "--session-dir", join(homedir(), ".pi", "agent", "sessions"),
-      "--provider", this.provider,
       "--approve",
     ], {
       cwd: this.cwd,
@@ -276,7 +273,7 @@ class PiRpc {
   }
 }
 
-pi = new PiRpc(config.workspace, config.agentDir, secrets.model.provider);
+pi = new PiRpc(config.workspace, config.agentDir);
 await pi.start();
 
 process.once("SIGTERM", () => void stop("SIGTERM"));

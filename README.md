@@ -16,13 +16,13 @@ Requires Node.js 22.19 or newer on your local machine, plus SSH access to an Ubu
 npx --yes pi-ship@latest deploy
 ```
 
-Pi Ship asks for the server and model credentials, hides credentials as you type them, and optionally lets you enter an SSH identity file. With no `--channel`, it installs in on-demand mode and does not leave an agent process running. Connect after deployment with:
+Pi Ship asks for the server details and optionally lets you enter an SSH identity file. With no `--channel`, it installs in on-demand mode and does not leave an agent process running. Connect after deployment with:
 
 ```bash
 npx --yes pi-ship@latest connect --server my-pi
 ```
 
-This opens a fresh, ephemeral Pi terminal session on the server. Nothing needs to be installed globally.
+This opens a fresh, ephemeral Pi terminal session on the server. Nothing needs to be installed globally. Use Pi's `/login` command to authenticate any supported provider, then select a model with `/model` or Ctrl+L. Authentication is saved on the server for later sessions.
 
 If you leave the identity file blank, SSH uses your agent or default keys and can prompt for the server account's password normally. An encrypted identity file can likewise prompt for its passphrase. Because deployment opens several SSH/SCP connections, you may be prompted more than once unless an SSH agent caches the credential.
 
@@ -36,15 +36,13 @@ npx --yes pi-ship@latest deploy --certificate ~/.ssh/server.pem
 
 ### Non-interactive setup
 
-For automation, provide the server and model options explicitly. This example uses the default on-demand mode:
+For automation, provide the server options explicitly. This example uses the default on-demand mode:
 
 ```bash
 npx --yes pi-ship@latest deploy \
   --server ubuntu@your-server \
   --certificate ~/.ssh/server.pem \
-  --name my-pi \
-  --provider anthropic \
-  --model-api-key "$ANTHROPIC_API_KEY"
+  --name my-pi
 
 npx --yes pi-ship@latest connect --server my-pi
 ```
@@ -56,13 +54,13 @@ npx --yes pi-ship@latest deploy \
   --server ubuntu@your-server \
   --certificate ~/.ssh/server.pem \
   --name my-pi \
-  --provider anthropic \
-  --model-api-key "$ANTHROPIC_API_KEY" \
   --channel telegram \
   --telegram-bot-token "$TELEGRAM_BOT_TOKEN"
 ```
 
-A certificate supplied during deployment is saved with the named server for later commands. API keys and bot tokens can also be supplied through `PI_SHIP_MODEL_API_KEY`, `PI_SHIP_TELEGRAM_TOKEN`, `PI_SHIP_SLACK_BOT_TOKEN`, and `PI_SHIP_SLACK_APP_TOKEN`. Be aware that secrets passed directly on the command line may be visible to other local processes while the command runs.
+A certificate supplied during deployment is saved with the named server for later commands. Bot tokens can also be supplied through `PI_SHIP_TELEGRAM_TOKEN`, `PI_SHIP_SLACK_BOT_TOKEN`, and `PI_SHIP_SLACK_APP_TOKEN`. Be aware that secrets passed directly on the command line may be visible to other local processes while the command runs.
+
+Pi Ship does not restrict or configure Pi's model providers. Before using a persistent Telegram or Slack channel, run `pi-ship connect --server my-pi` and authenticate through Pi's `/login` command.
 
 After deployment, send the displayed pairing command to the Telegram bot:
 
@@ -87,8 +85,6 @@ npx --yes pi-ship@latest deploy \
   --server ubuntu@your-server \
   --certificate ~/.ssh/server.pem \
   --name my-pi \
-  --provider anthropic \
-  --model-api-key "$ANTHROPIC_API_KEY" \
   --channel slack \
   --slack-bot-token "$SLACK_BOT_TOKEN" \
   --slack-app-token "$SLACK_APP_TOKEN"
@@ -99,7 +95,7 @@ The bot token must begin with `xoxb-` and the Socket Mode app token with `xapp-`
 ## Commands
 
 ```bash
-npx --yes pi-ship@latest deploy --server user@server --name my-pi --provider anthropic --model-api-key <key> [--certificate <path>]
+npx --yes pi-ship@latest deploy --server user@server --name my-pi [--certificate <path>]
 npx --yes pi-ship@latest connect --server my-pi
 npx --yes pi-ship@latest status --server my-pi
 npx --yes pi-ship@latest update --server my-pi
@@ -156,8 +152,6 @@ npm run dev -- deploy \
   --server ubuntu@your-test-server \
   --certificate ~/.ssh/test-server.pem \
   --name dev-pi \
-  --provider anthropic \
-  --model-api-key "$ANTHROPIC_API_KEY" \
   --channel telegram \
   --telegram-bot-token "$TELEGRAM_BOT_TOKEN"
 

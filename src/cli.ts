@@ -33,7 +33,7 @@ try {
 
 async function deploy(args: string[]): Promise<void> {
   const options = parseOptions(args, [
-    "--server", "--certificate", "--name", "--provider", "--model-api-key", "--channel",
+    "--server", "--certificate", "--name", "--channel",
     "--telegram-bot-token", "--slack-bot-token", "--slack-app-token",
   ]);
   const interactive = process.stdin.isTTY && process.stdout.isTTY && deployNeedsInput(options);
@@ -45,10 +45,6 @@ async function deploy(args: string[]): Promise<void> {
     throw new Error("The name must contain only letters, numbers, _ or -, and be at most 32 characters.");
   }
 
-  const providerInput = await required(options, "--provider", "Model provider (anthropic/openai/google)", { defaultValue: "anthropic" });
-  if (!isProvider(providerInput)) throw new Error(`Unsupported model provider: ${providerInput}`);
-  const modelApiKey = options.get("--model-api-key") ?? process.env.PI_SHIP_MODEL_API_KEY
-    ?? await required(options, "--model-api-key", `${providerInput} API key: `, { secret: true });
   const channel = options.get("--channel") ?? "connect";
   if (channel !== "connect" && channel !== "telegram" && channel !== "slack") {
     throw new Error(`Unsupported communication channel: ${channel}`);
@@ -64,9 +60,7 @@ async function deploy(args: string[]): Promise<void> {
     workspace: "/var/lib/pi-ship/workspace",
     agentDir: "/var/lib/pi-ship/agent",
   };
-  const secrets: ShipSecrets = {
-    model: { provider: providerInput, apiKey: modelApiKey },
-  };
+  const secrets: ShipSecrets = {};
   if (channel === "telegram") {
     const botToken = options.get("--telegram-bot-token") ?? process.env.PI_SHIP_TELEGRAM_TOKEN
       ?? await required(options, "--telegram-bot-token", "Telegram bot token: ", { secret: true });
@@ -134,7 +128,7 @@ async function connect(args: string[]): Promise<void> {
   const options = parseOptions(args, ["--server", "--certificate"]);
   const server = await required(options, "--server", "Server (saved name or user@host): ");
   const connection = await resolveServer(server, certificateOption(options));
-  const remoteCommand = "sudo -n -u pi-ship env HOME=/var/lib/pi-ship PATH=/opt/pi-ship/node/bin:/usr/local/bin:/usr/bin:/bin PI_SHIP_CONFIG=/etc/pi-ship/config.json PI_SHIP_SECRETS=/etc/pi-ship/secrets.json /opt/pi-ship/app/bin/pi-ship-connect";
+  const remoteCommand = "sudo -n -u pi-ship env HOME=/var/lib/pi-ship PATH=/opt/pi-ship/node/bin:/usr/local/bin:/usr/bin:/bin PI_SHIP_CONFIG=/etc/pi-ship/config.json /opt/pi-ship/app/bin/pi-ship-connect";
   await run("ssh", sshArgs(connection, "-t", remoteCommand));
 }
 
@@ -188,9 +182,8 @@ async function logs(args: string[]): Promise<void> {
 function printHelp(): void {
   console.log(`pi-ship
 
-  deploy --server <user@host> --name <name> --provider <provider>
-         --model-api-key <key> [--channel <telegram|slack> [channel credentials]]
-         [--certificate <path>]
+  deploy --server <user@host> --name <name>
+         [--channel <telegram|slack> [channel credentials]] [--certificate <path>]
   connect --server <name-or-user@host> [--certificate <path>]
   update --server <name-or-user@host> [--certificate <path>]
   status --server <name-or-user@host> [--certificate <path>]
@@ -202,8 +195,9 @@ Deploy channel credentials:
 
 Without --channel, Pi runs only for one-off sessions opened by connect.
 Missing required options are prompted for when running in a terminal.
-Credentials may also be supplied through PI_SHIP_MODEL_API_KEY,
-PI_SHIP_TELEGRAM_TOKEN, PI_SHIP_SLACK_BOT_TOKEN, and PI_SHIP_SLACK_APP_TOKEN.
+Authenticate model providers from Pi with /login. Channel credentials may also
+be supplied through PI_SHIP_TELEGRAM_TOKEN, PI_SHIP_SLACK_BOT_TOKEN, and
+PI_SHIP_SLACK_APP_TOKEN.
 The certificate is used as the SSH identity file. A certificate supplied during
 deploy is saved with the named server for later connect, update, status, and logs calls.`);
 }
@@ -314,8 +308,7 @@ async function promptSecret(question: string): Promise<string> {
 }
 
 function deployNeedsInput(options: Map<string, string>): boolean {
-  if (["--server", "--name", "--provider"].some((name) => !options.get(name))) return true;
-  if (!options.get("--model-api-key") && !process.env.PI_SHIP_MODEL_API_KEY) return true;
+  if (["--server", "--name"].some((name) => !options.get(name))) return true;
   if (options.get("--channel") === "telegram") {
     return !options.get("--telegram-bot-token") && !process.env.PI_SHIP_TELEGRAM_TOKEN;
   }
@@ -352,6 +345,3 @@ function scpArgs(connection: ServerConnection, ...args: string[]): string[] {
   return [...(connection.certificate ? ["-i", connection.certificate] : []), ...args];
 }
 
-function isProvider(value: string): value is ShipSecrets["model"]["provider"] {
-  return value === "anthropic" || value === "openai" || value === "google";
-}
