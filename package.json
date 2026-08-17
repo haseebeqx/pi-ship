@@ -2,6 +2,14 @@
   "name": "pi-ship",
   "version": "0.1.0",
   "description": "Deploy an always-running Pi to a remote server and talk to it securely",
+  "homepage": "https://github.com/haseebeqx/pi-ship#readme",
+  "bugs": {
+    "url": "https://github.com/haseebeqx/pi-ship/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/haseebeqx/pi-ship.git"
+  },
   "keywords": [
     "pi",
     "cli",
@@ -29,6 +37,7 @@
     "dev": "tsx src/cli.ts",
     "runtime": "tsx src/runtime.ts",
     "test": "node --import tsx --test test/**/*.test.ts",
+    "verify": "npm run check && npm test && npm run build",
     "prepack": "npm run build",
     "prepublishOnly": "npm run check && npm test"
   },
@@ -46,5 +55,6 @@
   "publishConfig": {
     "access": "public"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "packageManager": "npm@11.6.1"
 }

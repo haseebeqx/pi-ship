@@ -90,6 +90,81 @@ install_pi_version() {
   fi
 }
 
+if [[ $MODE == configure ]]; then
+  CONFIG=${2:?config is required}
+  SECRETS=${3:?secrets are required}
+  [[ -x /opt/pi-ship/node/bin/node ]] || { echo "Pi Ship runtime is not installed" >&2; exit 1; }
+  [[ -f /etc/pi-ship/config.json && -f /etc/pi-ship/secrets.json ]] || { echo "Pi Ship is not configured" >&2; exit 1; }
+
+  /opt/pi-ship/node/bin/node -e '
+    const [configPath, secretsPath] = process.argv.slice(1);
+    const config = require(configPath);
+    const secrets = require(secretsPath);
+    const count = Number(Boolean(config.telegram)) + Number(Boolean(config.slack));
+    if (count > 1) throw new Error("only one messaging provider can be configured");
+    if (config.telegram && !secrets.telegram?.botToken) throw new Error("Telegram bot token is missing");
+    if (config.slack && (!secrets.slack?.botToken || !secrets.slack?.appToken)) throw new Error("Slack tokens are missing");
+  ' "$CONFIG" "$SECRETS"
+
+  backup=$(mktemp -d /etc/pi-ship/channel-backup.XXXXXX)
+  cp -a /etc/pi-ship/config.json "$backup/config.json"
+  cp -a /etc/pi-ship/secrets.json "$backup/secrets.json"
+  TELEGRAM_STATE_WAS_PRESENT=no
+  SLACK_STATE_WAS_PRESENT=no
+  if [[ -e /var/lib/pi-ship/telegram-state.json ]]; then
+    cp -a /var/lib/pi-ship/telegram-state.json "$backup/telegram-state.json"
+    TELEGRAM_STATE_WAS_PRESENT=yes
+  fi
+  if [[ -e /var/lib/pi-ship/slack-state.json ]]; then
+    cp -a /var/lib/pi-ship/slack-state.json "$backup/slack-state.json"
+    SLACK_STATE_WAS_PRESENT=yes
+  fi
+  SERVICE_WAS_ENABLED=no
+  SERVICE_WAS_ACTIVE=no
+  if systemctl is-enabled --quiet pi-ship.service; then SERVICE_WAS_ENABLED=yes; fi
+  if systemctl is-active --quiet pi-ship.service; then SERVICE_WAS_ACTIVE=yes; fi
+  CONFIGURED=no
+
+  rollback_configure() {
+    local status=$?
+    trap - EXIT HUP INT TERM
+    if [[ $CONFIGURED != yes ]]; then
+      set +e
+      systemctl stop pi-ship.service
+      cp -a "$backup/config.json" /etc/pi-ship/config.json
+      cp -a "$backup/secrets.json" /etc/pi-ship/secrets.json
+      rm -f /var/lib/pi-ship/telegram-state.json /var/lib/pi-ship/slack-state.json
+      if [[ $TELEGRAM_STATE_WAS_PRESENT == yes ]]; then cp -a "$backup/telegram-state.json" /var/lib/pi-ship/telegram-state.json; fi
+      if [[ $SLACK_STATE_WAS_PRESENT == yes ]]; then cp -a "$backup/slack-state.json" /var/lib/pi-ship/slack-state.json; fi
+      if [[ $SERVICE_WAS_ENABLED == yes ]]; then systemctl enable pi-ship.service; else systemctl disable pi-ship.service; fi
+      if [[ $SERVICE_WAS_ACTIVE == yes ]]; then systemctl start pi-ship.service; fi
+    fi
+    rm -rf "$backup"
+    exit "$status"
+  }
+  trap rollback_configure EXIT
+  trap 'exit 1' HUP INT TERM
+
+  systemctl stop pi-ship.service || true
+  install -m 640 -o root -g pi-ship "$CONFIG" /etc/pi-ship/config.json
+  install -m 640 -o root -g pi-ship "$SECRETS" /etc/pi-ship/secrets.json
+  # Reconfiguring a provider intentionally revokes its previous sender allowlist.
+  rm -f /var/lib/pi-ship/telegram-state.json /var/lib/pi-ship/slack-state.json
+  PERSISTENT=$(/opt/pi-ship/node/bin/node -e 'const c=require(process.argv[1]); process.stdout.write(c.telegram || c.slack ? "yes" : "no")' /etc/pi-ship/config.json)
+  if [[ $PERSISTENT == yes ]]; then
+    systemctl enable pi-ship.service
+    systemctl start pi-ship.service
+  else
+    systemctl disable pi-ship.service >/dev/null 2>&1 || true
+  fi
+
+  CONFIGURED=yes
+  trap - EXIT HUP INT TERM
+  rm -rf "$backup"
+  echo "Messaging provider configuration updated"
+  exit 0
+fi
+
 if [[ $MODE == update-pi ]]; then
   VERSION=${2:?Pi version is required}
   EXPECTED_VERSION=${3:?expected installed Pi version is required}
@@ -220,7 +295,7 @@ if [[ $MODE == update ]]; then
 fi
 
 if [[ $MODE != install ]]; then
-  echo "usage: install.sh install <archive> <config> <secrets> <version> | update <archive> <version> <expected-version> | update-pi <version> <expected-version>" >&2
+  echo "usage: install.sh install <archive> <config> <secrets> <version> | configure <config> <secrets> | update <archive> <version> <expected-version> | update-pi <version> <expected-version>" >&2
   exit 1
 fi
 

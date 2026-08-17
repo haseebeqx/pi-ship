@@ -16,7 +16,7 @@ Requires Node.js 22.19 or newer on your local machine, plus SSH access to an Ubu
 npx --yes pi-ship deploy
 ```
 
-Pi Ship asks for the server details and optionally lets you enter an SSH identity file. With no `--channel`, it installs in on-demand mode and does not leave an agent process running. Start Pi after deployment with:
+Pi Ship asks for the server details, optionally lets you enter an SSH identity file, and then offers Telegram, Slack, or no messaging provider. None is the default and installs in on-demand mode without leaving an agent process running. Start Pi after deployment with:
 
 ```bash
 npx --yes pi-ship pi --server my-pi
@@ -95,9 +95,10 @@ The bot token must begin with `xoxb-` and the Socket Mode app token with `xapp-`
 ## Commands
 
 ```bash
-npx --yes pi-ship deploy --server user@server --name my-pi [--certificate <path>]
+npx --yes pi-ship deploy --server user@server --name my-pi [--channel <telegram|slack|none>] [--certificate <path>]
 npx --yes pi-ship pi --server my-pi
 npx --yes pi-ship pi --server my-pi -- install npm:@foo/bar
+npx --yes pi-ship channel --server my-pi
 npx --yes pi-ship status --server my-pi
 npx --yes pi-ship update --server my-pi
 npx --yes pi-ship update-pi --server my-pi
@@ -105,6 +106,8 @@ npx --yes pi-ship logs --server my-pi
 ```
 
 If installed globally, the same commands are available as `pi-ship`. Required options that are omitted are requested interactively. In non-interactive environments, supply them as flags or credential environment variables.
+
+`channel` shows an interactive menu for adding, replacing, reconfiguring, or removing Telegram and Slack. Reconfiguring resets the sender allowlist and prints a new one-time pairing code. To automate it, pass `--channel telegram`, `--channel slack`, or `--channel none` together with the applicable credentials. Provider changes are applied atomically; if the new persistent provider cannot start, Pi Ship restores the previous configuration and service.
 
 `pi` with no Pi arguments streams a fresh, one-off Pi TUI over SSH; no remote Pi process remains after it exits. Arguments after `--` are passed directly to the remote Pi CLI, allowing commands such as `install`, `remove`, and `list`. `status` reports the Pi Ship and Pi versions and whether the runtime is persistent or on demand. `update` compares that version with the local `pi-ship` package and only uploads and installs when the local version is newer. `update-pi` updates the remote Pi binary to the latest release independently of Pi Ship; pass `--version <semver>` to install a specific newer version. Persistent services are restarted and automatically rolled back if the updated Pi fails to start. Configuration, credentials, workspace data, and agent state are preserved.
 
@@ -168,10 +171,46 @@ Communication providers implement `CommunicationProvider` in `src/channels/types
 
 ## Publishing
 
-The package is prepared automatically before publishing: `prepublishOnly` runs type checks and tests, while `prepack` builds `dist`. To inspect exactly what npm will upload:
+`npm run verify` type-checks, tests, and builds the project. npm also runs the checks and build through `prepublishOnly` and `prepack`, so a broken package cannot be published accidentally. Inspect the upload before a release with:
 
 ```bash
 npm pack --dry-run
 ```
 
-When ready, authenticate with npm and run `npm publish`. The unscoped `pi-ship` package name is currently available; after publishing, the quick-start command above will work.
+### First publish
+
+The `pi-ship` name is currently unclaimed. The package must exist on npm before npm exposes its trusted-publisher settings, so publish `0.1.0` once from a secure local checkout:
+
+```bash
+npm login
+npm run verify
+npm publish --access public
+```
+
+Publishing is an external, irreversible action. Confirm that the repository is clean, the version is correct, and the dry-run contents are expected before running it.
+
+### Trusted publisher setup
+
+After the first publish, open the package settings on npmjs.com and add a **GitHub Actions** trusted publisher with these exact values:
+
+- Organization or user: `haseebeqx`
+- Repository: `pi-ship`
+- Workflow filename: `publish.yml`
+- Environment name: leave blank
+- Allowed action: `npm publish`
+
+The workflow at `.github/workflows/publish.yml` uses GitHub's OIDC identity and npm provenance, so it does not need an `NPM_TOKEN` secret. For maximum protection, require two-factor authentication and publishing through a trusted publisher in the package's npm access settings after confirming the workflow works.
+
+### Future releases
+
+Create versions and tags with npm so `package.json` and `npm-shrinkwrap.json` stay synchronized, then publish a GitHub Release for that tag:
+
+```bash
+npm version patch # or minor / major
+npm run verify
+git push origin main --follow-tags
+VERSION=$(node -p "require('./package.json').version")
+gh release create "v$VERSION" --verify-tag --generate-notes
+```
+
+Publishing the GitHub Release triggers `.github/workflows/publish.yml`. The workflow rejects a release whose tag does not exactly match `v<package version>`, runs the package lifecycle checks, and publishes to npm with provenance. CI independently verifies pull requests and pushes on the minimum supported Node.js release and the current Node.js line.

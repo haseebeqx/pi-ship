@@ -18,6 +18,7 @@ try {
   switch (command) {
     case "deploy": await deploy(args); break;
     case "pi": await runPi(args); break;
+    case "channel": await configureChannel(args); break;
     case "update": await update(args); break;
     case "update-pi": await updatePi(args); break;
     case "status": await status(args); break;
@@ -46,9 +47,11 @@ async function deploy(args: string[]): Promise<void> {
     throw new Error("The name must contain only letters, numbers, _ or -, and be at most 32 characters.");
   }
 
-  const channel = options.get("--channel") ?? "connect";
+  const requestedChannel = options.get("--channel")
+    ?? (interactive ? await promptDeployChannel() : "none");
+  const channel = requestedChannel === "none" ? "connect" : requestedChannel;
   if (channel !== "connect" && channel !== "telegram" && channel !== "slack") {
-    throw new Error(`Unsupported communication channel: ${channel}`);
+    throw new Error(`Unsupported communication channel: ${requestedChannel}`);
   }
   const connection: ServerConnection = {
     target,
@@ -136,6 +139,75 @@ async function runPi(args: string[]): Promise<void> {
   await run("ssh", sshArgs(connection, ...ttyArgs, remoteCommand));
 }
 
+async function configureChannel(args: string[]): Promise<void> {
+  const options = parseOptions(args, [
+    "--server", "--certificate", "--channel",
+    "--telegram-bot-token", "--slack-bot-token", "--slack-app-token",
+  ]);
+  const server = await required(options, "--server", "Server (saved name or user@host): ");
+  const connection = await resolveServer(server, certificateOption(options));
+  const currentText = await run("ssh", sshArgs(connection, "sudo -n cat /etc/pi-ship/config.json"), { capture: true });
+  const current = JSON.parse(currentText) as ShipConfig;
+  const currentChannel = current.telegram ? "telegram" : current.slack ? "slack" : "none";
+  const requested = options.get("--channel") ?? await promptChannel(currentChannel);
+  const channel = requested === "connect" ? "none" : requested;
+  if (channel !== "none" && channel !== "telegram" && channel !== "slack") {
+    throw new Error(`Unsupported communication channel: ${requested}`);
+  }
+
+  const pairingCode = channel === "none" ? undefined : randomBytes(5).toString("hex").toUpperCase();
+  const config: ShipConfig = {
+    name: current.name,
+    workspace: current.workspace,
+    agentDir: current.agentDir,
+  };
+  const secrets: ShipSecrets = {};
+  if (channel === "telegram") {
+    const botToken = options.get("--telegram-bot-token") ?? process.env.PI_SHIP_TELEGRAM_TOKEN
+      ?? await required(options, "--telegram-bot-token", "Telegram bot token: ", { secret: true });
+    config.telegram = {
+      pairingCodeHash: hashPairingCode(pairingCode!),
+      statePath: "/var/lib/pi-ship/telegram-state.json",
+    };
+    secrets.telegram = { botToken };
+  } else if (channel === "slack") {
+    const botToken = options.get("--slack-bot-token") ?? process.env.PI_SHIP_SLACK_BOT_TOKEN
+      ?? await required(options, "--slack-bot-token", "Slack bot token (xoxb-): ", { secret: true });
+    const appToken = options.get("--slack-app-token") ?? process.env.PI_SHIP_SLACK_APP_TOKEN
+      ?? await required(options, "--slack-app-token", "Slack Socket Mode app token (xapp-): ", { secret: true });
+    config.slack = {
+      socketMode: true,
+      pairingCodeHash: hashPairingCode(pairingCode!),
+      statePath: "/var/lib/pi-ship/slack-state.json",
+    };
+    secrets.slack = { botToken, appToken };
+  }
+
+  const temporary = await mkdtemp(join(tmpdir(), "pi-ship-channel-"));
+  try {
+    const configFile = join(temporary, "config.json");
+    const secretsFile = join(temporary, "secrets.json");
+    await writeFile(configFile, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+    await writeFile(secretsFile, `${JSON.stringify(secrets, null, 2)}\n`, { mode: 0o600 });
+    const remoteDir = `/tmp/pi-ship-${randomBytes(6).toString("hex")}`;
+    await run("ssh", sshArgs(connection, `install -d -m 700 ${shellQuote(remoteDir)}`));
+    await run("scp", scpArgs(connection, configFile, secretsFile, join(packageRoot(), "scripts", "install.sh"), `${connection.target}:${remoteDir}/`));
+    const configure = `${remoteDir}/install.sh configure ${remoteDir}/config.json ${remoteDir}/secrets.json`;
+    const elevate = `if [ \"$(id -u)\" = 0 ]; then bash ${configure}; else sudo -n bash ${configure}; fi`;
+    await run("ssh", sshArgs(connection, withRemoteCleanup(remoteDir, elevate)));
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+
+  if (channel === "none") {
+    console.log(`✓ Messaging is disabled on ${server}; Pi now runs on demand.`);
+  } else {
+    console.log(`✓ ${channel === "telegram" ? "Telegram" : "Slack"} is configured on ${server}.`);
+    console.log("\nSend this direct message to the bot:");
+    console.log(`  /pair ${pairingCode}`);
+  }
+}
+
 async function update(args: string[]): Promise<void> {
   const options = parseOptions(args, ["--server", "--certificate"]);
   const name = await required(options, "--server", "Server (saved name or user@host): ");
@@ -215,8 +287,10 @@ function printHelp(): void {
   console.log(`pi-ship
 
   deploy --server <user@host> --name <name>
-         [--channel <telegram|slack> [channel credentials]] [--certificate <path>]
+         [--channel <telegram|slack|none> [channel credentials]] [--certificate <path>]
   pi      --server <name-or-user@host> [--certificate <path>] [-- <pi-args...>]
+  channel --server <name-or-user@host> [--channel <telegram|slack|none>]
+          [channel credentials] [--certificate <path>]
   update    --server <name-or-user@host> [--certificate <path>]
   update-pi --server <name-or-user@host> [--certificate <path>] [--version <semver>]
   status    --server <name-or-user@host> [--certificate <path>]
@@ -227,6 +301,7 @@ Deploy channel credentials:
   Slack:    --slack-bot-token <token> --slack-app-token <token>
 
 Without --channel, Pi runs only for one-off sessions opened by pi.
+Run channel interactively to add, replace, reconfigure, or remove a messaging provider.
 Arguments after -- are passed directly to Pi; for example: pi-ship pi --server my-pi -- install npm:@foo/bar
 Missing required options are prompted for when running in a terminal.
 Authenticate model providers from Pi with /login. Channel credentials may also
@@ -334,6 +409,31 @@ async function required(
   }
 }
 
+async function promptDeployChannel(): Promise<string> {
+  console.log("Messaging provider (optional):");
+  console.log("  1) Telegram\n  2) Slack\n  3) None (on demand only, default)");
+  while (true) {
+    const answer = (await prompt("Choose a provider [3]: ")).toLowerCase();
+    const channel = ({ "": "none", "1": "telegram", "2": "slack", "3": "none", telegram: "telegram", slack: "slack", none: "none" } as Record<string, string>)[answer];
+    if (channel) return channel;
+    console.log("Please choose 1, 2, or 3.");
+  }
+}
+
+async function promptChannel(current: string): Promise<string> {
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    throw new Error("Missing required option: --channel (cannot prompt without a terminal)");
+  }
+  console.log(`Current messaging provider: ${current}`);
+  console.log("  1) Telegram\n  2) Slack\n  3) None (on demand only)");
+  while (true) {
+    const answer = (await prompt("Choose a provider [1-3]: ")).toLowerCase();
+    const channel = ({ "1": "telegram", "2": "slack", "3": "none", telegram: "telegram", slack: "slack", none: "none" } as Record<string, string>)[answer];
+    if (channel) return channel;
+    console.log("Please choose 1, 2, or 3.");
+  }
+}
+
 async function prompt(question: string): Promise<string> {
   const rl = createInterface({ input: process.stdin, output: process.stdout });
   return new Promise((resolvePrompt) => rl.question(question, (answer) => {
@@ -375,7 +475,7 @@ async function promptSecret(question: string): Promise<string> {
 }
 
 function deployNeedsInput(options: Map<string, string>): boolean {
-  if (["--server", "--name"].some((name) => !options.get(name))) return true;
+  if (["--server", "--name", "--channel"].some((name) => !options.get(name))) return true;
   if (options.get("--channel") === "telegram") {
     return !options.get("--telegram-bot-token") && !process.env.PI_SHIP_TELEGRAM_TOKEN;
   }
