@@ -13,6 +13,15 @@ export {
   type DeployOptions,
   type UpdatePiOptions,
 } from "./api.js";
-export { PiRpc, type PiRpcEvent, type PiRpcOptions } from "./rpc.js";
+export {
+  PiRpc,
+  type PiRpcCommand,
+  type PiRpcCommandOf,
+  type PiRpcData,
+  type PiRpcEvent,
+  type PiRpcImage,
+  type PiRpcOptions,
+  type PiRpcResponse,
+} from "./rpc.js";
 export type { ShipConfig, ShipSecrets } from "./config.js";
 export type { ServerConnection } from "./inventory.js";

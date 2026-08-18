@@ -69,10 +69,19 @@ const pi = new PiRpc({
 
 await pi.start();
 const unsubscribe = pi.onEvent((event) => console.log(event));
+const state = await pi.getState();
+await pi.setThinkingLevel("high");
 await pi.prompt("List the files in this project");
+console.log(await pi.getSessionStats());
 unsubscribe();
 await pi.stop();
 ```
+
+`PiRpc` exposes Pi's RPC controls for aborting, steering and follow-ups, sessions,
+models, thinking levels, compaction, statistics, naming, command discovery, images,
+and direct bash execution. `onEvent()` receives the complete event stream, including
+tool execution events. `send()` accepts any typed Pi RPC command and returns its
+correlated response (including `data`) for lower-level access.
 
 `PiRpc` runs Pi locally in a child process. `connect()` opens Pi on a server deployed by Pi Ship.
 
