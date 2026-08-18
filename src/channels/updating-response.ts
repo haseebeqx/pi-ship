@@ -12,6 +12,7 @@ export interface UpdatingResponseOptions {
  */
 export class UpdatingResponse implements OutboundResponse {
   private text = "";
+  private status = "";
   private lastPublished = "";
   private lastPublishAt = 0;
   private queue = Promise.resolve();
@@ -24,28 +25,42 @@ export class UpdatingResponse implements OutboundResponse {
     return this.enqueue(false);
   }
 
+  progress(status?: string): Promise<void> {
+    this.status = status?.trim() ?? "";
+    return this.enqueue(false);
+  }
+
   complete(fallbackText: string): Promise<void> {
     if (!this.text.trim()) this.text = fallbackText;
+    this.status = "";
     return this.enqueue(true);
   }
 
   fail(message: string): Promise<void> {
     this.text = message;
+    this.status = "";
     return this.enqueue(true);
   }
 
   private enqueue(force: boolean): Promise<void> {
     this.queue = this.queue.then(async () => {
-      if (this.text === this.lastPublished) return;
+      let snapshot = this.snapshot();
+      if (snapshot === this.lastPublished) return;
       if (!force && this.lastPublishAt > 0) {
         const wait = (this.options.minUpdateIntervalMs ?? 750) - (Date.now() - this.lastPublishAt);
         if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
       }
-      if (this.text === this.lastPublished) return;
-      await this.options.publish(this.text);
-      this.lastPublished = this.text;
+      snapshot = this.snapshot();
+      if (snapshot === this.lastPublished) return;
+      await this.options.publish(snapshot);
+      this.lastPublished = snapshot;
       this.lastPublishAt = Date.now();
     });
     return this.queue;
+  }
+
+  private snapshot(): string {
+    if (!this.status) return this.text;
+    return `${this.text}${this.text ? "\n\n" : ""}⏳ ${this.status}`;
   }
 }

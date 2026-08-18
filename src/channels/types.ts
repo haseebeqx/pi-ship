@@ -1,8 +1,24 @@
+export interface IncomingAttachment {
+  kind: "image" | "document" | "audio";
+  fileName: string;
+  mimeType: string;
+  /** Base64-encoded file contents. */
+  data: string;
+}
+
+export interface ReplyContext {
+  senderId?: string;
+  text?: string;
+  messageId?: string;
+}
+
 export interface IncomingMessage {
   provider: string;
   conversationId: string;
   senderId: string;
   text: string;
+  attachments?: IncomingAttachment[];
+  replyTo?: ReplyContext;
   /** Provider-specific parent message identifier (for example, a Slack thread timestamp). */
   threadId?: string;
 }
@@ -12,6 +28,8 @@ export type MessageHandler = (message: IncomingMessage) => Promise<void>;
 /** A progressively rendered provider response. Implementations serialize concurrent calls in invocation order. */
 export interface OutboundResponse {
   append(delta: string): Promise<void>;
+  /** Replace the transient activity line shown below generated text. */
+  progress(status?: string): Promise<void>;
   complete(fallbackText: string): Promise<void>;
   fail(message: string): Promise<void>;
 }
@@ -35,6 +53,7 @@ export function bufferedResponse(
   let text = "";
   return {
     async append(delta) { text += delta; },
+    async progress() {},
     async complete(fallbackText) {
       await provider.send(message.conversationId, text.trim() || fallbackText, signal);
     },

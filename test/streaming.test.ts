@@ -17,6 +17,19 @@ test("updating responses publish deltas as cumulative snapshots", async () => {
   assert.deepEqual(snapshots, ["Hello", "Hello world"]);
 });
 
+test("updating responses render transient progress and remove it on completion", async () => {
+  const snapshots: string[] = [];
+  const response = new UpdatingResponse({
+    minUpdateIntervalMs: 0,
+    publish: async (text) => { snapshots.push(text); },
+  });
+
+  await response.progress("Using bash");
+  await response.append("Done");
+  await response.complete("unused");
+  assert.deepEqual(snapshots, ["⏳ Using bash", "Done\n\n⏳ Using bash", "Done"]);
+});
+
 test("updating responses publish fallback text when Pi emits no text", async () => {
   const snapshots: string[] = [];
   const response = new UpdatingResponse({

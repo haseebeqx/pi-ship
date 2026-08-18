@@ -1,13 +1,31 @@
 import type { CommunicationProvider, IncomingMessage, MessageHandler, OutboundResponse } from "./types.js";
 import { UpdatingResponse } from "./updating-response.js";
 import { pairingCodeMatches, PairingStore } from "../pairing.js";
+import { fetchWithRetry } from "./retry.js";
+
+interface TelegramFileRef { file_id: string; file_name?: string; mime_type?: string }
+
+interface TelegramMessage {
+  message_id: number;
+  text?: string;
+  caption?: string;
+  chat: { id: number; type: string };
+  from?: { id: number; is_bot: boolean };
+  photo?: Array<{ file_id: string; width: number; height: number }>;
+  document?: TelegramFileRef;
+  voice?: TelegramFileRef;
+  audio?: TelegramFileRef;
+  reply_to_message?: TelegramMessage;
+}
 
 interface TelegramUpdate {
   update_id: number;
-  message?: {
-    text?: string;
+  message?: TelegramMessage;
+  message_reaction?: {
     chat: { id: number; type: string };
-    from?: { id: number; is_bot: boolean };
+    user?: { id: number; is_bot: boolean };
+    message_id: number;
+    new_reaction: Array<{ type: string; emoji?: string }>;
   };
 }
 
@@ -43,7 +61,7 @@ export class TelegramProvider implements CommunicationProvider {
         const updates = await this.call<TelegramUpdate[]>("getUpdates", {
           offset: this.offset,
           timeout: ready ? 30 : 0,
-          allowed_updates: ["message"],
+          allowed_updates: ["message", "message_reaction"],
         }, signal);
         if (!ready) {
           ready = true;
@@ -89,7 +107,7 @@ export class TelegramProvider implements CommunicationProvider {
     const response = new UpdatingResponse({
       minUpdateIntervalMs: 1_000,
       publish: async (text) => {
-        const parts = splitTelegramMessage(text);
+        const parts = splitTelegramMessage(adaptMarkdownForTelegram(text));
         for (let index = 0; index < parts.length; index += 1) {
           const part = parts[index]!;
           if (messageIds[index] === undefined) {
@@ -112,6 +130,7 @@ export class TelegramProvider implements CommunicationProvider {
     });
     return {
       append: (delta) => response.append(delta),
+      progress: (status) => response.progress(status),
       complete: async (fallbackText) => {
         try {
           await response.complete(fallbackText);
@@ -130,11 +149,25 @@ export class TelegramProvider implements CommunicationProvider {
   }
 
   private async handleUpdate(update: TelegramUpdate, handler: MessageHandler, signal: AbortSignal): Promise<void> {
+    if (update.message_reaction) {
+      const reaction = update.message_reaction;
+      const senderId = reaction.user?.id.toString();
+      if (!senderId || reaction.user?.is_bot || !this.store.has(senderId) || reaction.chat.type !== "private") return;
+      const emoji = reaction.new_reaction.map((item) => item.emoji ?? item.type).join(" ") || "removed";
+      await handler({
+        provider: this.name,
+        conversationId: reaction.chat.id.toString(),
+        senderId,
+        text: `[Reaction ${emoji} on message ${reaction.message_id}]`,
+      });
+      return;
+    }
+
     const message = update.message;
     const senderId = message?.from?.id.toString();
     const conversationId = message?.chat.id.toString();
-    const text = message?.text?.trim();
-    if (!message || !senderId || !conversationId || !text || message.from?.is_bot) return;
+    const text = (message?.text ?? message?.caption ?? "").trim();
+    if (!message || !senderId || !conversationId || message.from?.is_bot) return;
 
     if (message.chat.type !== "private") {
       await this.send(conversationId, "For safety, this Pi only accepts private messages.", signal);
@@ -156,21 +189,67 @@ export class TelegramProvider implements CommunicationProvider {
       return;
     }
 
-    await handler({ provider: this.name, conversationId, senderId, text });
+    const attachments = await this.downloadAttachments(message, signal);
+    if (!text && attachments.length === 0) return;
+    const replied = message.reply_to_message;
+    await handler({
+      provider: this.name,
+      conversationId,
+      senderId,
+      text,
+      ...(attachments.length ? { attachments } : {}),
+      ...(replied ? { replyTo: {
+        senderId: replied.from?.id.toString(),
+        text: (replied.text ?? replied.caption ?? "").trim() || undefined,
+        messageId: replied.message_id.toString(),
+      } } : {}),
+    });
+  }
+
+  private async downloadAttachments(message: TelegramMessage, signal: AbortSignal) {
+    const refs: Array<{ kind: "image" | "document" | "audio"; ref: TelegramFileRef; fallback: string }> = [];
+    const photo = message.photo?.at(-1);
+    if (photo) refs.push({ kind: "image", ref: photo, fallback: `photo-${message.message_id}.jpg` });
+    if (message.document) refs.push({ kind: message.document.mime_type?.startsWith("image/") ? "image" : "document", ref: message.document, fallback: `document-${message.message_id}` });
+    if (message.voice) refs.push({ kind: "audio", ref: message.voice, fallback: `voice-${message.message_id}.ogg` });
+    if (message.audio) refs.push({ kind: "audio", ref: message.audio, fallback: `audio-${message.message_id}` });
+
+    return Promise.all(refs.map(async ({ kind, ref, fallback }) => {
+      const file = await this.call<{ file_path: string }>("getFile", { file_id: ref.file_id }, signal);
+      const response = await this.fetchFn(`https://api.telegram.org/file/bot${this.options.token}/${file.file_path}`, { signal });
+      if (!response.ok) throw new Error(`Telegram file download returned HTTP ${response.status}`);
+      return {
+        kind,
+        fileName: ref.file_name ?? file.file_path.split("/").at(-1) ?? fallback,
+        mimeType: ref.mime_type ?? (kind === "image" ? "image/jpeg" : kind === "audio" ? "audio/ogg" : "application/octet-stream"),
+        data: Buffer.from(await response.arrayBuffer()).toString("base64"),
+      };
+    }));
   }
 
   private async call<T>(method: string, body: object, signal?: AbortSignal): Promise<T> {
-    const response = await this.fetchFn(`https://api.telegram.org/bot${this.options.token}/${method}`, {
+    const response = await fetchWithRetry(() => this.fetchFn(`https://api.telegram.org/bot${this.options.token}/${method}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
       signal,
-    });
+    }), { signal });
     if (!response.ok) throw new Error(`Telegram returned HTTP ${response.status}`);
     const payload = await response.json() as TelegramResponse<T>;
     if (!payload.ok) throw new Error(payload.description ?? `Telegram ${method} failed`);
     return payload.result;
   }
+}
+
+/** Adapt unsupported CommonMark constructs while retaining Telegram-readable plain text. */
+export function adaptMarkdownForTelegram(text: string): string {
+  const blocks = text.split(/(```[\s\S]*?```|`[^`\n]+`)/g);
+  return blocks.map((block, index) => {
+    if (index % 2 === 1) return block;
+    return block
+      .replace(/^#{1,6}\s+/gm, "")
+      .replace(/\[([^\]]+)]\((https?:\/\/[^)]+)\)/g, "$1 ($2)");
+  }).join("");
 }
 
 export function splitTelegramMessage(text: string, limit = 4000): string[] {

@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { splitTelegramMessage, TelegramProvider } from "../src/channels/telegram.js";
+import { adaptMarkdownForTelegram, splitTelegramMessage, TelegramProvider } from "../src/channels/telegram.js";
+
+test("Telegram adapts headings and links without changing code", () => {
+  assert.equal(
+    adaptMarkdownForTelegram("# Title\n[docs](https://example.com) `# code`"),
+    "Title\ndocs (https://example.com) `# code`",
+  );
+});
 
 test("short Telegram messages remain intact", () => {
   assert.deepEqual(splitTelegramMessage("hello", 10), ["hello"]);

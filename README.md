@@ -12,7 +12,9 @@ Direct sessions stream Pi's interactive terminal over SSH and stop when you disc
 - **Messaging without Pi plugins** — Telegram and Slack are built-in transports in Pi Ship, not plugins loaded into the agent. Pi stays unchanged, the transports do not modify its prompt or tools, and you do not have to give a third-party integration plugin access to the agent's workspace and credentials.
 - **Direct Pi access** — run `npx pi-ship pi --server <name>` to open Pi's full interactive terminal over SSH, without logging into the server or managing a remote command yourself.
 - **On demand or always available** — use a fresh interactive Pi terminal with no idle process, or run a persistent agent through a messaging channel.
-- **Real-time native responses** — Pi's output streams into Telegram and Slack as it is generated, with rate-limited edits, message continuation, and Slack thread replies.
+- **Native messaging** — Pi's output streams into Telegram and Slack with rate-limited edits, message continuation, Markdown adaptation, reply context, attachments, reactions, and live tool status.
+- **Channel controls** — stop active work and manage models, thinking levels, and conversation sessions without opening a terminal.
+- **Reliable and proactive delivery** — transient API failures are retried, final delivery state survives restarts, and trusted local jobs can enqueue outbound messages.
 - **Stock Pi experience** — use Pi's normal model providers, authentication, models, sessions, tools, and trusted plugins instead of a channel-specific fork or reduced bot interface.
 - **Private by default** — a dedicated unprivileged user, one-time DM pairing, sender allowlists, protected credentials, and no root agent process.
 - **Safe operations** — health-checked deploys and updates roll back on failure; systemd restarts the persistent runtime after failures and reboots.
@@ -151,6 +153,27 @@ Only paired private Telegram accounts are allowed to send messages.
 
 Each Telegram chat, Slack direct-message conversation, and Slack thread has its own persistent Pi session. Messages within one conversation are processed in order, while separate conversations can run concurrently without sharing model context.
 
+Images are passed to vision-capable models. Documents and voice/audio messages are saved under the workspace's protected `.pi-ship/uploads` directory and their paths are included in the prompt, allowing Pi and installed tools to inspect them. Reply metadata and quoted text are preserved as prompt context.
+
+Messaging commands:
+
+- `/stop` or `/cancel` — abort active work immediately
+- `/new` — start a fresh session for the conversation
+- `/model` and `/model provider/model-id` — inspect or select the model
+- `/models` — list configured models
+- `/thinking off|minimal|low|medium|high|xhigh|max` — set reasoning effort
+- `/session` — show current session state
+- `/commands` — list Pi extension, prompt-template, and skill commands
+- `/help` — show channel commands
+
+Trusted local services and Pi extensions can send proactive messages by atomically writing a JSON file to `<workspace>/.pi-ship/outbox`:
+
+```json
+{"provider":"telegram","conversationId":"123456","text":"The scheduled task finished."}
+```
+
+The runtime claims queued files, retries transient provider failures, and records pending/delivered state under the agent directory so interrupted final deliveries can be retried after restart. Delivery is at-least-once; provider outages around acknowledgement can produce a duplicate.
+
 ### Slack
 
 Create a Slack app, enable **Socket Mode**, and create an app-level token (`xapp-`) with `connections:write`. Add these bot scopes under OAuth & Permissions:
@@ -158,8 +181,10 @@ Create a Slack app, enable **Socket Mode**, and create an app-level token (`xapp
 - `app_mentions:read`
 - `chat:write`
 - `im:history`
+- `files:read`
+- `reactions:read`
 
-Subscribe to the `app_mention` and `message.im` bot events, install the app to the workspace, then deploy:
+Subscribe to the `app_mention`, `message.im`, and `reaction_added` bot events, install the app to the workspace, then deploy:
 
 ```bash
 npx pi-ship deploy \

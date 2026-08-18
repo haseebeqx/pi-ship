@@ -1,6 +1,7 @@
 import type { CommunicationProvider, IncomingMessage, MessageHandler, OutboundResponse } from "./types.js";
 import { UpdatingResponse } from "./updating-response.js";
 import { pairingCodeMatches, PairingStore } from "../pairing.js";
+import { fetchWithRetry } from "./retry.js";
 
 interface SlackResponse {
   ok: boolean;
@@ -8,6 +9,15 @@ interface SlackResponse {
   ts?: string;
   user_id?: string;
   url?: string;
+}
+
+interface SlackFile {
+  id?: string;
+  name?: string;
+  mimetype?: string;
+  filetype?: string;
+  url_private_download?: string;
+  url_private?: string;
 }
 
 interface SlackEvent {
@@ -20,6 +30,9 @@ interface SlackEvent {
   thread_ts?: string;
   bot_id?: string;
   subtype?: string;
+  files?: SlackFile[];
+  reaction?: string;
+  item?: { type?: string; channel?: string; ts?: string };
 }
 
 interface SlackEnvelope {
@@ -86,7 +99,7 @@ export class SlackProvider implements CommunicationProvider {
       // chat.update is generally limited to roughly one request per second per channel.
       minUpdateIntervalMs: 1_000,
       publish: async (text) => {
-        const parts = splitSlackMessage(text);
+        const parts = splitSlackMessage(adaptMarkdownForSlack(text));
         for (let index = 0; index < parts.length; index += 1) {
           const part = parts[index]!;
           if (!timestamps[index]) {
@@ -159,14 +172,26 @@ export class SlackProvider implements CommunicationProvider {
     if (envelope.type !== "events_api") return;
 
     const event = envelope.payload?.event;
-    if (!event || event.bot_id || event.subtype || !event.user || !event.channel || !event.text) return;
-    if (event.type !== "message" && event.type !== "app_mention") return;
+    if (!event || event.bot_id || !event.user) return;
+    if (event.type === "reaction_added") {
+      const channel = event.item?.channel;
+      if (!channel || !this.store.has(event.user)) return;
+      await handler({
+        provider: this.name,
+        conversationId: channel,
+        senderId: event.user,
+        text: `[Reaction :${event.reaction ?? "unknown"}: on message ${event.item?.ts ?? "unknown"}]`,
+        threadId: event.item?.ts,
+      });
+      return;
+    }
+    if (event.subtype || !event.channel || (event.type !== "message" && event.type !== "app_mention")) return;
 
     const isDirectMessage = event.channel_type === "im";
-    const mentionsBot = event.type === "app_mention" || event.text.includes(`<@${this.botUserId}>`);
+    const mentionsBot = event.type === "app_mention" || (event.text ?? "").includes(`<@${this.botUserId}>`);
     if (!isDirectMessage && !mentionsBot) return;
-    const text = event.text.replaceAll(`<@${this.botUserId}>`, "").trim();
-    if (!text) return;
+    const text = (event.text ?? "").replaceAll(`<@${this.botUserId}>`, "").trim();
+    if (!text && !event.files?.length) return;
 
     if (!this.store.has(event.user)) {
       // Pairing is intentionally DM-only so the one-time code is never exposed in a channel.
@@ -185,13 +210,34 @@ export class SlackProvider implements CommunicationProvider {
       return;
     }
 
+    const attachments = await this.downloadAttachments(event.files ?? []);
     await handler({
       provider: this.name,
       conversationId: event.channel,
       senderId: event.user,
       text,
+      ...(attachments.length ? { attachments } : {}),
+      ...(event.thread_ts ? { replyTo: { messageId: event.thread_ts } } : {}),
       threadId: isDirectMessage ? event.thread_ts : (event.thread_ts ?? event.ts),
     });
+  }
+
+  private async downloadAttachments(files: SlackFile[]) {
+    return Promise.all(files.map(async (file) => {
+      const url = file.url_private_download ?? file.url_private;
+      if (!url) throw new Error(`Slack file ${file.id ?? file.name ?? "unknown"} has no download URL`);
+      const response = await this.fetchFn(url, {
+        headers: { authorization: `Bearer ${this.options.botToken}` },
+      });
+      if (!response.ok) throw new Error(`Slack file download returned HTTP ${response.status}`);
+      const mimeType = file.mimetype ?? response.headers.get("content-type") ?? "application/octet-stream";
+      return {
+        kind: mimeType.startsWith("image/") ? "image" as const : mimeType.startsWith("audio/") ? "audio" as const : "document" as const,
+        fileName: file.name ?? `slack-file-${file.id ?? Date.now()}.${file.filetype ?? "bin"}`,
+        mimeType,
+        data: Buffer.from(await response.arrayBuffer()).toString("base64"),
+      };
+    }));
   }
 
   private async call(
@@ -200,7 +246,7 @@ export class SlackProvider implements CommunicationProvider {
     token: string,
     signal?: AbortSignal,
   ): Promise<SlackResponse> {
-    const response = await this.fetchFn(`https://slack.com/api/${method}`, {
+    const response = await fetchWithRetry(() => this.fetchFn(`https://slack.com/api/${method}`, {
       method: "POST",
       headers: {
         authorization: `Bearer ${token}`,
@@ -208,12 +254,26 @@ export class SlackProvider implements CommunicationProvider {
       },
       body: JSON.stringify(body),
       signal,
-    });
+    }), { signal });
     if (!response.ok) throw new Error(`Slack returned HTTP ${response.status}`);
     const payload = await response.json() as SlackResponse;
     if (!payload.ok) throw new Error(payload.error ?? `Slack ${method} failed`);
     return payload;
   }
+}
+
+/** Convert common Markdown constructs to Slack mrkdwn without changing code blocks. */
+export function adaptMarkdownForSlack(text: string): string {
+  const blocks = text.split(/(```[\s\S]*?```|`[^`\n]+`)/g);
+  return blocks.map((block, index) => {
+    if (index % 2 === 1) return block;
+    return block
+      .replace(/^#{1,6}\s+/gm, "")
+      .replace(/\[([^\]]+)]\((https?:\/\/[^)]+)\)/g, "<$2|$1>")
+      .replace(/\*\*([^*\n]+)\*\*/g, "*$1*")
+      .replace(/__([^_\n]+)__/g, "*$1*")
+      .replace(/~~([^~\n]+)~~/g, "~$1~");
+  }).join("");
 }
 
 export function splitSlackMessage(text: string, limit = 39_000): string[] {

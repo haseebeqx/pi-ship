@@ -3,8 +3,15 @@ import test from "node:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { SlackProvider, splitSlackMessage } from "../src/channels/slack.js";
+import { adaptMarkdownForSlack, SlackProvider, splitSlackMessage } from "../src/channels/slack.js";
 import { hashPairingCode } from "../src/pairing.js";
+
+test("Slack adapts common Markdown without changing code", () => {
+  assert.equal(
+    adaptMarkdownForSlack("# Title\n**bold** [docs](https://example.com) `**code**`"),
+    "Title\n*bold* <https://example.com|docs> `**code**`",
+  );
+});
 
 test("long Slack responses preserve the beginning in continuation messages", () => {
   const parts = splitSlackMessage("abcdefghijkl", 5);

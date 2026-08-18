@@ -2,14 +2,22 @@ import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import type { IncomingMessage } from "./channels/types.js";
-import { PiRpc, type PiRpcEvent, type PiRpcOptions } from "./rpc.js";
+import { PiRpc, type PiRpcEvent, type PiRpcImage, type PiRpcOptions } from "./rpc.js";
 
 export type ConversationIdentity = Pick<IncomingMessage, "provider" | "conversationId" | "threadId">;
 
 export interface ConversationRpc {
   start(): Promise<void>;
   stop(): Promise<void>;
-  prompt(message: string): Promise<void>;
+  prompt(message: string, images?: PiRpcImage[]): Promise<void>;
+  abort?(): Promise<void>;
+  newSession?(parentSession?: string): Promise<unknown>;
+  getState?(): Promise<unknown>;
+  setModel?(provider: string, modelId: string): Promise<unknown>;
+  getAvailableModels?(): Promise<unknown[]>;
+  setThinkingLevel?(level: "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"): Promise<void>;
+  getSessionStats?(): Promise<unknown>;
+  getCommands?(): Promise<unknown[]>;
   onEvent(listener: (event: PiRpcEvent) => void): () => void;
 }
 
@@ -59,6 +67,12 @@ export class ConversationSessions {
     return session.run(task);
   }
 
+  /** Abort active work immediately without waiting behind the conversation queue. */
+  async abort(message: ConversationIdentity): Promise<boolean> {
+    const session = this.sessions.get(conversationKey(message));
+    return session ? session.abort() : false;
+  }
+
   async stop(): Promise<void> {
     if (this.stopping) return;
     this.stopping = true;
@@ -95,6 +109,12 @@ class ConversationSession {
     // Keep this conversation's queue usable after an individual prompt fails.
     this.queue = work.then(() => undefined, () => undefined);
     return work;
+  }
+
+  async abort(): Promise<boolean> {
+    if (!this.rpc?.abort) return false;
+    await this.rpc.abort();
+    return true;
   }
 
   async stop(): Promise<void> {
