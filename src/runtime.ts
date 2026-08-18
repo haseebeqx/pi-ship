@@ -5,7 +5,8 @@ import { SlackProvider } from "./channels/slack.js";
 import { TelegramProvider } from "./channels/telegram.js";
 import { bufferedResponse, type CommunicationProvider, type IncomingMessage, type OutboundResponse } from "./channels/types.js";
 import { loadJson, type ShipConfig, type ShipSecrets } from "./config.js";
-import { PiRpc, type PiRpcEvent } from "./rpc.js";
+import type { PiRpcEvent } from "./rpc.js";
+import { ConversationSessions, type ConversationRpc } from "./sessions.js";
 
 const configPath = process.env.PI_SHIP_CONFIG ?? "/etc/pi-ship/config.json";
 const secretsPath = process.env.PI_SHIP_SECRETS ?? "/etc/pi-ship/secrets.json";
@@ -15,7 +16,13 @@ const secrets = await loadJson<ShipSecrets>(secretsPath);
 await mkdir(config.workspace, { recursive: true });
 await mkdir(config.agentDir, { recursive: true });
 
-let pi: PiRpc;
+const sessions = new ConversationSessions({
+  cwd: config.workspace,
+  agentDir: config.agentDir,
+  onFatal: (key, error) => {
+    console.error(`[runtime] Pi session ${key} exited: ${error.stack ?? error.message}`);
+  },
+});
 
 const providers: CommunicationProvider[] = [];
 if (config.telegram && secrets.telegram) {
@@ -40,15 +47,13 @@ if (providers.length === 0) throw new Error("No communication provider is config
 const providerByName = new Map(providers.map((provider) => [provider.name, provider]));
 
 const shutdown = new AbortController();
-let queue = Promise.resolve();
 const receive = (message: IncomingMessage): Promise<void> => {
-  // A persistent Pi session is stateful, so prompts are deliberately serialized.
-  const work = queue.then(() => respond(message));
-  queue = work.catch((error) => console.error(`[runtime] ${(error as Error).stack ?? error}`));
+  const work = sessions.run(message, (rpc) => respond(message, rpc));
+  void work.catch((error) => console.error(`[runtime] ${(error as Error).stack ?? error}`));
   return work;
 };
 
-async function respond(message: IncomingMessage): Promise<void> {
+async function respond(message: IncomingMessage, pi: ConversationRpc): Promise<void> {
   const provider = providerByName.get(message.provider);
   if (!provider) throw new Error(`Unknown communication provider: ${message.provider}`);
 
@@ -118,23 +123,12 @@ function assistantText(content: unknown): string {
 async function stop(signal: NodeJS.Signals): Promise<void> {
   console.log(`[runtime] received ${signal}; shutting down`);
   shutdown.abort();
-  await queue;
-  await pi.stop();
+  await sessions.stop();
 }
 
 function objectValue(value: unknown): PiRpcEvent | undefined {
   return typeof value === "object" && value !== null ? value as PiRpcEvent : undefined;
 }
-
-let fatalError: Error | undefined;
-pi = new PiRpc({ cwd: config.workspace, agentDir: config.agentDir, onFatal: (error) => {
-  if (fatalError) return;
-  fatalError = error;
-  console.error(`[runtime] fatal: ${error.stack ?? error.message}`);
-  process.exitCode = 1;
-  shutdown.abort();
-} });
-await pi.start();
 
 process.once("SIGTERM", () => void stop("SIGTERM"));
 process.once("SIGINT", () => void stop("SIGINT"));
@@ -151,7 +145,6 @@ const providerRun = Promise.all(providers.map(async (provider) => {
 }));
 
 await Promise.race([allReady, providerRun]);
-if (fatalError) throw fatalError;
 await notifyReady(`${config.name} is online; ${providers.map((provider) => provider.name).join(", ")} started`);
 console.log(`[runtime] ${config.name} is online; ${providers.map((provider) => provider.name).join(", ")} started`);
 await providerRun;

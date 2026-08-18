@@ -140,6 +140,8 @@ After deployment, send the displayed pairing command to the Telegram bot:
 
 Only paired private Telegram accounts are allowed to send messages.
 
+Each Telegram chat, Slack direct-message conversation, and Slack thread has its own persistent Pi session. Messages within one conversation are processed in order, while separate conversations can run concurrently without sharing model context.
+
 ### Slack
 
 Create a Slack app, enable **Socket Mode**, and create an app-level token (`xapp-`) with `connections:write`. Add these bot scopes under OAuth & Permissions:
