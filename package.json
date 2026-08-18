@@ -20,6 +20,15 @@
     "ai-agent"
   ],
   "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
   "bin": {
     "pi-ship": "dist/cli.js",
     "pi-ship-pi": "dist/pi.js",

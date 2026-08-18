@@ -18,6 +18,64 @@ Direct sessions stream Pi's interactive terminal over SSH and stop when you disc
 - **Safe operations** — health-checked deploys and updates roll back on failure; systemd restarts the persistent runtime after failures and reboots.
 - **Independent upgrades** — update Pi Ship or the Pi binary separately without losing configuration, credentials, workspace data, or agent state.
 
+## TypeScript and JavaScript API
+
+Pi Ship can be used as an ESM library from Node.js 22.19 or newer. TypeScript declarations are included.
+
+```bash
+npm install pi-ship
+```
+
+Deploy and connect programmatically:
+
+```typescript
+import { connect, deploy } from "pi-ship";
+
+await deploy({
+  server: "ubuntu@example.com",
+  certificate: "~/.ssh/server.pem",
+  name: "my-pi",
+  channel: "none",
+});
+
+await connect({
+  server: "my-pi",
+  piArgs: ["--no-session"],
+});
+```
+
+Messaging credentials are represented by a discriminated union, so TypeScript requires the credentials appropriate to the selected channel:
+
+```typescript
+await deploy({
+  server: "ubuntu@example.com",
+  name: "team-pi",
+  channel: "telegram",
+  telegramBotToken: process.env.TELEGRAM_BOT_TOKEN!,
+});
+```
+
+The package also exports `configureChannel`, `update`, `updatePi`, `status`, and `logs`. JavaScript uses the same API without type annotations.
+
+For direct access to Pi's JSONL RPC process, use `PiRpc`:
+
+```typescript
+import { PiRpc } from "pi-ship";
+
+const pi = new PiRpc({
+  cwd: process.cwd(),
+  agentDir: "/tmp/my-pi-agent",
+});
+
+await pi.start();
+const unsubscribe = pi.onEvent((event) => console.log(event));
+await pi.prompt("List the files in this project");
+unsubscribe();
+await pi.stop();
+```
+
+`PiRpc` runs Pi locally in a child process. `connect()` opens Pi on a server deployed by Pi Ship.
+
 ## Quick start
 
 Requires Node.js 22.19 or newer on your local machine, plus SSH access to an Ubuntu or Debian server whose user has passwordless `sudo`.

@@ -1,14 +1,11 @@
 #!/usr/bin/env node
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn } from "node:child_process";
 import { mkdir } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
-import { StringDecoder } from "node:string_decoder";
 import { SlackProvider } from "./channels/slack.js";
 import { TelegramProvider } from "./channels/telegram.js";
 import { bufferedResponse, type CommunicationProvider, type IncomingMessage, type OutboundResponse } from "./channels/types.js";
 import { loadJson, type ShipConfig, type ShipSecrets } from "./config.js";
+import { PiRpc, type PiRpcEvent } from "./rpc.js";
 
 const configPath = process.env.PI_SHIP_CONFIG ?? "/etc/pi-ship/config.json";
 const secretsPath = process.env.PI_SHIP_SECRETS ?? "/etc/pi-ship/secrets.json";
@@ -125,171 +122,18 @@ async function stop(signal: NodeJS.Signals): Promise<void> {
   await pi.stop();
 }
 
-type RpcObject = Record<string, unknown>;
-
-function objectValue(value: unknown): RpcObject | undefined {
-  return typeof value === "object" && value !== null ? value as RpcObject : undefined;
-}
-
-class PiRpc {
-  private child: ChildProcessWithoutNullStreams | undefined;
-  private stopping = false;
-  private nextId = 0;
-  private readonly listeners = new Set<(event: RpcObject) => void>();
-  private readonly pending = new Map<string, { resolve: () => void; reject: (error: Error) => void }>();
-  private settled: { resolve: () => void; reject: (error: Error) => void } | undefined;
-  private exitError: Error | undefined;
-
-  constructor(
-    private readonly cwd: string,
-    private readonly agentDir: string,
-    private readonly onFatal: (error: Error) => void,
-  ) {}
-
-  async start(): Promise<void> {
-    // Resolve the dependency's bin entry without importing Pi into this process.
-    const piModule = import.meta.resolve("@earendil-works/pi-coding-agent");
-    const cliPath = fileURLToPath(new URL("cli.js", piModule));
-    const child = spawn(process.execPath, [
-      cliPath,
-      "--mode", "rpc",
-      "--continue",
-      // Match SessionManager.continueRecent() from the former in-process runtime.
-      "--session-dir", join(homedir(), ".pi", "agent", "sessions"),
-      "--approve",
-    ], {
-      cwd: this.cwd,
-      env: { ...process.env, PI_CODING_AGENT_DIR: this.agentDir },
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    this.child = child;
-
-    child.stderr.on("data", (chunk: Buffer) => process.stderr.write(`[pi] ${chunk.toString()}`));
-    child.once("error", (error) => {
-      const failure = new Error(`Could not start Pi RPC process: ${error.message}`);
-      this.fail(failure);
-      if (!this.stopping) this.onFatal(failure);
-    });
-    child.once("exit", (code, signal) => {
-      const failure = new Error(`Pi RPC process exited (${signal ?? code ?? "unknown"})`);
-      this.fail(failure);
-      if (!this.stopping) this.onFatal(failure);
-    });
-    this.readJsonLines(child);
-
-    // A response confirms that startup and model/session initialization succeeded.
-    await this.send({ type: "get_state" });
-  }
-
-  onEvent(listener: (event: RpcObject) => void): () => void {
-    this.listeners.add(listener);
-    return () => this.listeners.delete(listener);
-  }
-
-  async prompt(message: string): Promise<void> {
-    if (this.settled) throw new Error("Pi already has an active prompt");
-    const completion = new Promise<void>((resolve, reject) => { this.settled = { resolve, reject }; });
-    try {
-      await this.send({ type: "prompt", message });
-    } catch (error) {
-      // The prompt was not accepted, so no agent_settled event will arrive.
-      this.settled = undefined;
-      throw error;
-    }
-    await completion;
-  }
-
-  send(command: RpcObject): Promise<void> {
-    if (this.exitError) return Promise.reject(this.exitError);
-    if (!this.child) return Promise.reject(new Error("Pi RPC process is not running"));
-
-    const id = `ship-${++this.nextId}`;
-    return new Promise((resolve, reject) => {
-      this.pending.set(id, { resolve, reject });
-      this.child!.stdin.write(`${JSON.stringify({ ...command, id })}\n`, (error) => {
-        if (!error) return;
-        this.pending.delete(id);
-        reject(error);
-      });
-    });
-  }
-
-  async stop(): Promise<void> {
-    this.stopping = true;
-    const child = this.child;
-    if (!child || child.exitCode !== null) return;
-    child.kill("SIGTERM");
-    await new Promise<void>((resolve) => {
-      const timeout = setTimeout(() => { child.kill("SIGKILL"); }, 5_000);
-      child.once("exit", () => { clearTimeout(timeout); resolve(); });
-    });
-  }
-
-  private readJsonLines(child: ChildProcessWithoutNullStreams): void {
-    const decoder = new StringDecoder("utf8");
-    let buffer = "";
-    child.stdout.on("data", (chunk: Buffer) => {
-      buffer += decoder.write(chunk);
-      for (let newline = buffer.indexOf("\n"); newline !== -1; newline = buffer.indexOf("\n")) {
-        let line = buffer.slice(0, newline);
-        buffer = buffer.slice(newline + 1);
-        if (line.endsWith("\r")) line = line.slice(0, -1);
-        if (line) this.handleLine(line);
-      }
-    });
-    child.stdout.once("end", () => {
-      buffer += decoder.end();
-      if (buffer) this.handleLine(buffer.endsWith("\r") ? buffer.slice(0, -1) : buffer);
-    });
-  }
-
-  private handleLine(line: string): void {
-    let event: RpcObject;
-    try {
-      event = JSON.parse(line) as RpcObject;
-    } catch (error) {
-      this.fail(new Error(`Invalid JSON from Pi RPC process: ${(error as Error).message}`));
-      this.child?.kill("SIGTERM");
-      return;
-    }
-
-    if (event.type === "response" && typeof event.id === "string") {
-      const request = this.pending.get(event.id);
-      if (request) {
-        this.pending.delete(event.id);
-        if (event.success === true) request.resolve();
-        else request.reject(new Error(typeof event.error === "string" ? event.error : "Pi RPC command failed"));
-      }
-    }
-
-    for (const listener of this.listeners) listener(event);
-    if (event.type === "agent_settled" && this.settled) {
-      const settled = this.settled;
-      this.settled = undefined;
-      settled.resolve();
-    }
-  }
-
-  private fail(error: Error): void {
-    if (this.exitError) return;
-    this.exitError = error;
-    for (const request of this.pending.values()) request.reject(error);
-    this.pending.clear();
-    if (this.settled) {
-      this.settled.reject(error);
-      this.settled = undefined;
-    }
-  }
+function objectValue(value: unknown): PiRpcEvent | undefined {
+  return typeof value === "object" && value !== null ? value as PiRpcEvent : undefined;
 }
 
 let fatalError: Error | undefined;
-pi = new PiRpc(config.workspace, config.agentDir, (error) => {
+pi = new PiRpc({ cwd: config.workspace, agentDir: config.agentDir, onFatal: (error) => {
   if (fatalError) return;
   fatalError = error;
   console.error(`[runtime] fatal: ${error.stack ?? error.message}`);
   process.exitCode = 1;
   shutdown.abort();
-});
+} });
 await pi.start();
 
 process.once("SIGTERM", () => void stop("SIGTERM"));
