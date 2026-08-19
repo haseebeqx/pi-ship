@@ -39,6 +39,7 @@
     "scripts",
     "docs",
     "README.md",
+    "CHANGELOG.md",
     "npm-shrinkwrap.json"
   ],
   "scripts": {
