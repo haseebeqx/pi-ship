@@ -8,7 +8,8 @@ import { bufferedResponse, type CommunicationProvider, type IncomingMessage, typ
 import { loadJson, type ShipConfig, type ShipSecrets } from "./config.js";
 import { DeliveryTracker } from "./delivery.js";
 import type { PiRpcEvent } from "./rpc.js";
-import { ConversationSessions, type ConversationRpc } from "./sessions.js";
+import { SessionManager } from "./session-manager.js";
+import { conversationKey, type ConversationIdentity, type ConversationRpc } from "./sessions.js";
 
 const configPath = process.env.PI_SHIP_CONFIG ?? "/etc/pi-ship/config.json";
 const secretsPath = process.env.PI_SHIP_SECRETS ?? "/etc/pi-ship/secrets.json";
@@ -18,9 +19,10 @@ const secrets = await loadJson<ShipSecrets>(secretsPath);
 await mkdir(config.workspace, { recursive: true });
 await mkdir(config.agentDir, { recursive: true });
 
-const sessions = new ConversationSessions({
+const sessions = new SessionManager<ConversationIdentity, ConversationRpc>({
   cwd: config.workspace,
   agentDir: config.agentDir,
+  key: conversationKey,
   onFatal: (key, error) => {
     console.error(`[runtime] Pi session ${key} exited: ${error.stack ?? error.message}`);
   },

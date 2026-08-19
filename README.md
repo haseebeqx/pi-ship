@@ -84,8 +84,49 @@ and direct bash execution. `onEvent()` receives the complete event stream, inclu
 tool execution events. `send()` accepts any typed Pi RPC command and returns its
 correlated response (including `data`) for lower-level access.
 
-`PiRpc` runs Pi locally in a child process. For the same programmable API on a
-server deployed by Pi Ship, use `connectRpc()`:
+`PiRpc` runs Pi locally in a child process.
+
+### Reusable session runtime
+
+Gateways and other applications can use `SessionManager` without adopting Pi
+Ship's Telegram or Slack message types. Identities may be any application value;
+a `key` function defines their stable persistent-session identity.
+
+```typescript
+import { SessionManager } from "pi-ship";
+
+type Identity = { tenant: string; conversation: string };
+const sessions = new SessionManager<Identity>({
+  cwd: process.cwd(),
+  agentDir: "/tmp/my-pi-agent",
+  key: ({ tenant, conversation }) => `${tenant}:${conversation}`,
+  idleTimeoutMs: 10 * 60_000,
+  maxSessions: 100,
+  maxConcurrentSessions: 10,
+  maxQueueSizePerSession: 20,
+  maxTotalQueueSize: 500,
+});
+
+const identity = { tenant: "acme", conversation: "support-42" };
+const unsubscribe = sessions.subscribe(identity, (event) => deliver(event));
+await sessions.prompt(identity, "Review this repository");
+await sessions.steer(identity, "Focus on the public API");
+await sessions.followUp(identity, "Now add tests");
+await sessions.abort(identity);
+unsubscribe();
+await sessions.stop();
+```
+
+`run(identity, task)` provides FIFO ordering per identity while allowing work for
+other identities to proceed concurrently. RPC processes are created lazily,
+continue from a stable hashed session directory after failure or eviction, and
+are evicted when idle. `abort`, `steer`, and `followUp` bypass the work queue so
+they can control an active request. `onEvent` receives lifecycle, task, fatal,
+and wrapped Pi RPC events. A custom `createSession` factory can supply another
+`SessionRpc` implementation; its `SessionFactoryContext` contains only generic
+identity, storage, and lifecycle concerns, leaving delivery entirely to the app.
+
+For the same programmable API on a server deployed by Pi Ship, use `connectRpc()`:
 
 ```typescript
 import { connectRpc } from "pi-ship";

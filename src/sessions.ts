@@ -11,6 +11,8 @@ export interface ConversationRpc {
   stop(): Promise<void>;
   prompt(message: string, images?: PiRpcImage[]): Promise<void>;
   abort?(): Promise<void>;
+  steer?(message: string, images?: PiRpcImage[]): Promise<void>;
+  followUp?(message: string, images?: PiRpcImage[]): Promise<void>;
   newSession?(parentSession?: string): Promise<unknown>;
   getState?(): Promise<unknown>;
   setModel?(provider: string, modelId: string): Promise<unknown>;

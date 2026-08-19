@@ -24,5 +24,12 @@ export {
   type PiRpcOptions,
   type PiRpcResponse,
 } from "./rpc.js";
+export {
+  SessionManager,
+  type SessionFactoryContext,
+  type SessionManagerEvent,
+  type SessionManagerOptions,
+  type SessionRpc,
+} from "./session-manager.js";
 export type { ShipConfig, ShipSecrets } from "./config.js";
 export type { ServerConnection } from "./inventory.js";
