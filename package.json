@@ -1,7 +1,7 @@
 {
   "name": "pi-ship",
   "version": "0.1.0",
-  "description": "Deploy an always-running Pi to a remote server and talk to it securely",
+  "description": "Deploy Pi to a remote server for secure terminal, Telegram, or Slack access",
   "homepage": "https://github.com/haseebeqx/pi-ship#readme",
   "bugs": {
     "url": "https://github.com/haseebeqx/pi-ship/issues"
@@ -37,6 +37,7 @@
   "files": [
     "dist",
     "scripts",
+    "docs",
     "README.md",
     "npm-shrinkwrap.json"
   ],
