@@ -54,6 +54,45 @@ write_pi_version() {
   mv /opt/pi-ship/pi-version.tmp /opt/pi-ship/pi-version
 }
 
+# Materialize generic consumer data outside the workspace. The script never
+# prints secret values or includes them in the systemd unit/status text.
+install_runtime_profile() {
+  install -d -m 750 -o root -g pi-ship /etc/pi-ship/secrets.d
+  rm -f /etc/pi-ship/secrets.d/* /etc/pi-ship/runtime-config.json
+  /opt/pi-ship/node/bin/node - "$1" "$2" <<'NODE'
+const fs = require("fs");
+const [configPath, secretsPath] = process.argv.slice(2);
+const config = JSON.parse(fs.readFileSync(configPath, "utf8"));
+const secrets = JSON.parse(fs.readFileSync(secretsPath, "utf8"));
+const profile = config.runtime || {};
+if (profile.configuration !== undefined) {
+  fs.writeFileSync("/etc/pi-ship/runtime-config.json", JSON.stringify(profile.configuration) + "\n", { mode: 0o640 });
+}
+for (const [name, value] of Object.entries(secrets.runtime?.secretFiles || {})) {
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(name) || typeof value !== "string" || value.includes("\0")) throw new Error("invalid runtime secret file");
+  fs.writeFileSync(`/etc/pi-ship/secrets.d/${name}`, value, { mode: 0o640, flag: "wx" });
+}
+const quote = value => `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"`;
+const lines = ["[Service]"];
+for (const path of profile.readOnlyDirectories || []) {
+  if (typeof path !== "string" || !path.startsWith("/") || /[\n\0]/.test(path)) throw new Error("invalid runtime directory");
+  lines.push(`ReadOnlyPaths=${quote(path)}`);
+}
+for (const path of profile.readWriteDirectories || []) {
+  if (typeof path !== "string" || !path.startsWith("/") || /[\n\0]/.test(path)) throw new Error("invalid runtime directory");
+  lines.push(`ReadWritePaths=${quote(path)}`);
+}
+const resources = profile.resources || {};
+if (resources.memoryMaxBytes !== undefined) lines.push(`MemoryMax=${resources.memoryMaxBytes}`);
+if (resources.cpuQuotaPercent !== undefined) lines.push(`CPUQuota=${resources.cpuQuotaPercent}%`);
+if (resources.tasksMax !== undefined) lines.push(`TasksMax=${resources.tasksMax}`);
+fs.mkdirSync("/etc/systemd/system/pi-ship.service.d", { recursive: true });
+fs.writeFileSync("/etc/systemd/system/pi-ship.service.d/runtime.conf", lines.join("\n") + "\n", { mode: 0o644 });
+NODE
+  chown root:pi-ship /etc/pi-ship/runtime-config.json /etc/pi-ship/secrets.d/* 2>/dev/null || true
+  chmod 640 /etc/pi-ship/runtime-config.json /etc/pi-ship/secrets.d/* 2>/dev/null || true
+}
+
 migrate_service_readiness() {
   local unit=/etc/systemd/system/pi-ship.service
   [[ -f $unit ]] || return 0
@@ -98,8 +137,14 @@ if [[ $MODE == configure ]]; then
 
   /opt/pi-ship/node/bin/node -e '
     const [configPath, secretsPath] = process.argv.slice(1);
+    const fs = require("fs");
     const config = require(configPath);
     const secrets = require(secretsPath);
+    const previous = require("/etc/pi-ship/secrets.json");
+    if (secrets.runtime === undefined && previous.runtime !== undefined) {
+      secrets.runtime = previous.runtime;
+      fs.writeFileSync(secretsPath, JSON.stringify(secrets) + "\n", { mode: 0o600 });
+    }
     const count = Number(Boolean(config.telegram)) + Number(Boolean(config.slack));
     if (count > 1) throw new Error("only one messaging provider can be configured");
     if (config.telegram && !secrets.telegram?.botToken) throw new Error("Telegram bot token is missing");
@@ -148,6 +193,8 @@ if [[ $MODE == configure ]]; then
   systemctl stop pi-ship.service || true
   install -m 640 -o root -g pi-ship "$CONFIG" /etc/pi-ship/config.json
   install -m 640 -o root -g pi-ship "$SECRETS" /etc/pi-ship/secrets.json
+  install_runtime_profile /etc/pi-ship/config.json /etc/pi-ship/secrets.json
+  systemctl daemon-reload
   # Reconfiguring a provider intentionally revokes its previous sender allowlist.
   rm -f /var/lib/pi-ship/telegram-state.json /var/lib/pi-ship/slack-state.json
   PERSISTENT=$(/opt/pi-ship/node/bin/node -e 'const c=require(process.argv[1]); process.stdout.write(c.telegram || c.slack ? "yes" : "no")' /etc/pi-ship/config.json)
@@ -347,6 +394,7 @@ write_pi_version "$PI_VERSION"
 install -d -m 750 -o pi-ship -g pi-ship /etc/pi-ship
 install -m 640 -o root -g pi-ship "$CONFIG" /etc/pi-ship/config.json
 install -m 640 -o root -g pi-ship "$SECRETS" /etc/pi-ship/secrets.json
+install_runtime_profile /etc/pi-ship/config.json /etc/pi-ship/secrets.json
 install -d -m 750 -o pi-ship -g pi-ship /var/lib/pi-ship/workspace /var/lib/pi-ship/agent
 
 cat >/etc/systemd/system/pi-ship.service <<'UNIT'

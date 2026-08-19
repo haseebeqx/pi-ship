@@ -10,11 +10,15 @@ import { DeliveryTracker } from "./delivery.js";
 import type { PiRpcEvent } from "./rpc.js";
 import { SessionManager } from "./session-manager.js";
 import { conversationKey, type ConversationIdentity, type ConversationRpc } from "./sessions.js";
+import { PiRpc, type PiRpcOptions } from "./rpc.js";
+import { runtimePiArgs, validateRuntimeProfile, validateRuntimeSecrets } from "./runtime-profile.js";
 
 const configPath = process.env.PI_SHIP_CONFIG ?? "/etc/pi-ship/config.json";
 const secretsPath = process.env.PI_SHIP_SECRETS ?? "/etc/pi-ship/secrets.json";
 const config = await loadJson<ShipConfig>(configPath);
 const secrets = await loadJson<ShipSecrets>(secretsPath);
+validateRuntimeProfile(config.runtime);
+validateRuntimeSecrets(secrets.runtime);
 
 await mkdir(config.workspace, { recursive: true });
 await mkdir(config.agentDir, { recursive: true });
@@ -23,6 +27,21 @@ const sessions = new SessionManager<ConversationIdentity, ConversationRpc>({
   cwd: config.workspace,
   agentDir: config.agentDir,
   key: conversationKey,
+  createRpc: (options: PiRpcOptions) => new PiRpc({
+    ...options,
+    piArgs: runtimePiArgs(config.runtime),
+    environment: {
+      ...config.runtime?.environment,
+      ...secrets.runtime?.environment,
+      PI_SHIP_RUNTIME_CONFIG: "/etc/pi-ship/runtime-config.json",
+      PI_SHIP_SECRET_DIR: "/etc/pi-ship/secrets.d",
+    },
+  }),
+  idleTimeoutMs: config.runtime?.resources?.idleTimeoutMs,
+  maxSessions: config.runtime?.resources?.maxSessions,
+  maxConcurrentSessions: config.runtime?.resources?.maxConcurrentSessions,
+  maxQueueSizePerSession: config.runtime?.resources?.maxQueueSizePerSession,
+  maxTotalQueueSize: config.runtime?.resources?.maxTotalQueueSize,
   onFatal: (key, error) => {
     console.error(`[runtime] Pi session ${key} exited: ${error.stack ?? error.message}`);
   },

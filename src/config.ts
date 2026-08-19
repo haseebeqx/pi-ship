@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import type { RuntimeProfile, RuntimeSecrets } from "./runtime-profile.js";
 
 export interface ShipConfig {
   name: string;
@@ -13,6 +14,8 @@ export interface ShipConfig {
     pairingCodeHash: string;
     statePath: string;
   };
+  /** Consumer-defined runtime policy; never contains secret values. */
+  runtime?: RuntimeProfile;
 }
 
 export interface ShipSecrets {
@@ -23,6 +26,8 @@ export interface ShipSecrets {
     botToken: string;
     appToken: string;
   };
+  /** Kept in the protected secrets document, separate from ShipConfig. */
+  runtime?: RuntimeSecrets;
 }
 
 export async function loadJson<T>(path: string): Promise<T> {

@@ -10,12 +10,33 @@ import {
   status,
   update,
   updatePi,
+  runtimePiArgs,
+  validateRuntimeProfile,
+  validateRuntimeSecrets,
 } from "../src/index.js";
 
 test("public library entry point is side-effect free and exports its API", () => {
   for (const value of [PiRpc, configureChannel, connect, connectRpc, deploy, logs, status, update, updatePi]) {
     assert.equal(typeof value, "function");
   }
+});
+
+test("generic runtime profiles build Pi policy without mixing in secrets", () => {
+  const profile = {
+    environment: { APP_MODE: "test" },
+    tools: ["read", "bash"],
+    model: { provider: "test-provider", id: "test-model" },
+    piArgs: ["--thinking", "low"],
+    readWriteDirectories: ["/srv/state"],
+    resources: { maxSessions: 2 },
+  } as const;
+  validateRuntimeProfile(profile);
+  validateRuntimeSecrets({ secretFiles: { token: "super-secret" } });
+  assert.deepEqual(runtimePiArgs(profile), [
+    "--thinking", "low", "--tools", "read,bash", "--provider", "test-provider", "--model", "test-model",
+  ]);
+  assert.throws(() => validateRuntimeSecrets({ secretFiles: { "../token": "secret" } }), /filename/);
+  assert.throws(() => validateRuntimeProfile({ readOnlyDirectories: ["relative"] }), /absolute/);
 });
 
 test("PiRpc rejects commands before it is started", async () => {

@@ -1,3 +1,8 @@
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import type { RuntimeProfile, RuntimeSecrets } from "./runtime-profile.js";
+import { validateRuntimeProfile, validateRuntimeSecrets } from "./runtime-profile.js";
 import {
   configureChannelCommand,
   connectCommand,
@@ -25,6 +30,10 @@ export type DeployOptions = ConnectionOptions & ChannelOptions & {
   name: string;
   /** Make this server the default. The first saved server becomes the default automatically. */
   default?: boolean;
+  /** Generic process, Pi, filesystem, and resource policy. */
+  runtime?: RuntimeProfile;
+  /** Secret files installed outside the workspace. Never included in RuntimeProfile. */
+  runtimeSecrets?: RuntimeSecrets;
 };
 
 export interface ConnectOptions extends ConnectionOptions {
@@ -40,12 +49,32 @@ export interface UpdatePiOptions extends ConnectionOptions {
 }
 
 /** Deploy Pi Ship to an SSH-accessible server. */
-export function deploy(options: DeployOptions): Promise<void> {
+export async function deploy(options: DeployOptions): Promise<void> {
+  validateRuntimeProfile(options.runtime);
+  validateRuntimeSecrets(options.runtimeSecrets);
   const args = connectionArgs(options);
   args.push("--name", options.name, "--channel", options.channel ?? "none");
   if (options.default) args.push("--default");
   appendChannelArgs(args, options);
-  return deployCommand(args);
+  if (!options.runtime && !options.runtimeSecrets) return deployCommand(args);
+
+  const temporary = await mkdtemp(join(tmpdir(), "pi-ship-profile-"));
+  try {
+    if (options.runtime) {
+      const path = join(temporary, "runtime.json");
+      await writeFile(path, `${JSON.stringify(options.runtime)}\n`, { mode: 0o600 });
+      args.push("--runtime-config", path);
+    }
+    if (options.runtimeSecrets) {
+      const path = join(temporary, "runtime-secrets.json");
+      await writeFile(path, `${JSON.stringify(options.runtimeSecrets)}\n`, { mode: 0o600 });
+      await chmod(path, 0o600);
+      args.push("--runtime-secrets", path);
+    }
+    await deployCommand(args);
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
 }
 
 /** Open an interactive or argument-driven Pi session on a deployed server. */

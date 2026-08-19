@@ -58,9 +58,10 @@ test("generic sessions order locally, run across identities, and expose controls
   await manager.abort({ id: "a" });
   await manager.steer({ id: "a" }, "change");
   await manager.followUp({ id: "a" }, "next");
-  assert.equal(created[0]?.aborted, 1);
-  assert.deepEqual(created[0]?.steered, ["change"]);
-  assert.deepEqual(created[0]?.followed, ["next"]);
+  const sessionA = created.find((rpc) => rpc.context.identity.id === "a");
+  assert.equal(sessionA?.aborted, 1);
+  assert.deepEqual(sessionA?.steered, ["change"]);
+  assert.deepEqual(sessionA?.followed, ["next"]);
   release();
   await Promise.all([first, second]);
   assert.equal(order.at(-1), "a2");

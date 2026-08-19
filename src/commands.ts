@@ -10,6 +10,7 @@ import type { ServerConnection } from "./inventory.js";
 import { run, shellQuote } from "./process.js";
 import { compareVersions, validateVersion } from "./version.js";
 import type { ShipConfig, ShipSecrets } from "./config.js";
+import { validateRuntimeProfile, validateRuntimeSecrets, type RuntimeProfile, type RuntimeSecrets } from "./runtime-profile.js";
 
 export async function runCli(argv: string[] = process.argv.slice(2)): Promise<void> {
   const [command = "help", ...args] = argv;
@@ -32,6 +33,7 @@ export async function deployCommand(args: string[]): Promise<void> {
   const options = parseOptions(args, [
     "--server", "--certificate", "--name", "--channel", "--default",
     "--telegram-bot-token", "--slack-bot-token", "--slack-app-token",
+    "--runtime-config", "--runtime-secrets",
   ], ["--default"]);
   const interactive = process.stdin.isTTY && process.stdout.isTTY && deployNeedsInput(options);
   const target = await selectedServer(options, "SSH server (user@host): ", false);
@@ -60,6 +62,14 @@ export async function deployCommand(args: string[]): Promise<void> {
     agentDir: "/var/lib/pi-ship/agent",
   };
   const secrets: ShipSecrets = {};
+  if (options.get("--runtime-config")) {
+    config.runtime = JSON.parse(await readFile(resolve(options.get("--runtime-config")!), "utf8")) as RuntimeProfile;
+    validateRuntimeProfile(config.runtime);
+  }
+  if (options.get("--runtime-secrets")) {
+    secrets.runtime = JSON.parse(await readFile(resolve(options.get("--runtime-secrets")!), "utf8")) as RuntimeSecrets;
+    validateRuntimeSecrets(secrets.runtime);
+  }
   if (channel === "telegram") {
     const botToken = options.get("--telegram-bot-token") ?? process.env.PI_SHIP_TELEGRAM_TOKEN
       ?? await required(options, "--telegram-bot-token", "Telegram bot token: ", { secret: true });
@@ -158,6 +168,7 @@ export async function configureChannelCommand(args: string[]): Promise<void> {
     name: current.name,
     workspace: current.workspace,
     agentDir: current.agentDir,
+    runtime: current.runtime,
   };
   const secrets: ShipSecrets = {};
   if (channel === "telegram") {
@@ -286,6 +297,7 @@ function printHelp(): void {
 
   deploy --server <user@host> --name <name> [--default]
          [--channel <telegram|slack|none> [channel credentials]] [--certificate <path>]
+         [--runtime-config <json>] [--runtime-secrets <json>]
   pi      [--server <name-or-user@host>] [--certificate <path>] [-- <pi-args...>]
   channel [--server <name-or-user@host>] [--channel <telegram|slack|none>]
           [channel credentials] [--certificate <path>]

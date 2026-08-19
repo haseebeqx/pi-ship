@@ -26,6 +26,10 @@ export interface PiRpcOptions {
   continueSession?: boolean;
   /** Override the session directory passed to Pi. */
   sessionDir?: string;
+  /** Additional Pi CLI arguments, placed before session arguments. */
+  piArgs?: readonly string[];
+  /** Additional environment inherited only by the Pi subprocess. */
+  environment?: Readonly<Record<string, string>>;
 }
 
 /** A typed Node.js client for Pi's JSONL RPC subprocess mode. */
@@ -54,7 +58,7 @@ export class PiRpc {
     const sessionArgs = this.options.continueSession === false
       ? ["--no-session"]
       : ["--continue", "--session-dir", sessionDir];
-    const child = this.spawnProcess(cliPath, sessionArgs);
+    const child = this.spawnProcess(cliPath, [...(this.options.piArgs ?? []), ...sessionArgs]);
     this.child = child;
 
     child.stderr.on("data", (chunk: Buffer) => process.stderr.write(`[pi] ${chunk.toString()}`));
@@ -263,7 +267,7 @@ export class PiRpc {
   protected spawnProcess(cliPath: string, sessionArgs: string[]): ChildProcessWithoutNullStreams {
     return spawn(process.execPath, [cliPath, "--mode", "rpc", ...sessionArgs, "--approve"], {
       cwd: this.options.cwd,
-      env: { ...process.env, PI_CODING_AGENT_DIR: this.options.agentDir },
+      env: { ...process.env, ...this.options.environment, PI_CODING_AGENT_DIR: this.options.agentDir },
       stdio: ["pipe", "pipe", "pipe"],
     });
   }

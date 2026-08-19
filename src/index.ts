@@ -32,4 +32,12 @@ export {
   type SessionRpc,
 } from "./session-manager.js";
 export type { ShipConfig, ShipSecrets } from "./config.js";
+export {
+  runtimePiArgs,
+  validateRuntimeProfile,
+  validateRuntimeSecrets,
+  type JsonValue,
+  type RuntimeProfile,
+  type RuntimeSecrets,
+} from "./runtime-profile.js";
 export type { ServerConnection } from "./inventory.js";

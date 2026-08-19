@@ -45,6 +45,32 @@ await connect({
 });
 ```
 
+Deployments also accept a generic runtime profile, so downstream gateways and agent products do not need Pi Ship to add an integration-specific field for each capability:
+
+```typescript
+await deploy({
+  server: "ubuntu@example.com",
+  name: "automation",
+  channel: "none",
+  runtime: {
+    environment: { APP_MODE: "production" },
+    configuration: { pollingIntervalMs: 30_000 },
+    readOnlyDirectories: ["/srv/reference-data"],
+    readWriteDirectories: ["/srv/automation-state"],
+    piArgs: ["--thinking", "high"],
+    tools: ["read", "write", "bash"],
+    model: { provider: "anthropic", id: "claude-sonnet-4-5" },
+    resources: { memoryMaxBytes: 2_147_483_648, tasksMax: 128, maxSessions: 50 },
+  },
+  runtimeSecrets: {
+    environment: { SERVICE_TOKEN: process.env.SERVICE_TOKEN! },
+    secretFiles: { "signing-key.pem": process.env.SIGNING_KEY! },
+  },
+});
+```
+
+Non-secret `configuration` is written outside the workspace and its path is exposed as `PI_SHIP_RUNTIME_CONFIG`. Secret environment variables and files are separately transferred; files are installed with restricted permissions under the directory named by `PI_SHIP_SECRET_DIR`. Secret values are never added to the runtime profile, command arguments, service unit, status output, or progress messages. Secret names, but not values, may be used in validation errors. Use `runtime.environment` for public values and `runtimeSecrets.environment` or `runtimeSecrets.secretFiles` for credentials. Filesystem and service resource limits are enforced by the hardened systemd service, while queue/session limits are enforced by `SessionManager`.
+
 Messaging credentials are represented by a discriminated union, so TypeScript requires the credentials appropriate to the selected channel:
 
 ```typescript
@@ -286,6 +312,8 @@ Use `npx pi-ship <command>`. If installed globally, replace `npx pi-ship` with `
 | `deploy` | `--telegram-bot-token` | `<token>` | For Telegram | Telegram bot token. Falls back to `PI_SHIP_TELEGRAM_TOKEN`. |
 | `deploy` | `--slack-bot-token` | `<xoxb-token>` | For Slack | Slack bot token. Falls back to `PI_SHIP_SLACK_BOT_TOKEN`. |
 | `deploy` | `--slack-app-token` | `<xapp-token>` | For Slack | Slack Socket Mode app token. Falls back to `PI_SHIP_SLACK_APP_TOKEN`. |
+| `deploy` | `--runtime-config` | `<json-file>` | No | Generic non-secret `RuntimeProfile` JSON. Prefer the typed `deploy()` API. |
+| `deploy` | `--runtime-secrets` | `<json-file>` | No | Generic `RuntimeSecrets` JSON; only the path, never its contents, is placed on the command line. |
 | `pi` | `--server` | `<name-or-user@host>` | No | A saved server name or direct SSH destination. Falls back to `PI_SHIP_SERVER`, then the default. |
 | `pi` | `--certificate` | `<path>` | No | Override the saved SSH identity file. |
 | `pi` | `--` | `<pi-args...>` | No | Stop parsing Pi Ship options and pass all remaining arguments to Pi, for example `-- install npm:@foo/bar`. |
