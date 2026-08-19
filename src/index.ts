@@ -13,6 +13,7 @@ export {
   type DeployOptions,
   type UpdatePiOptions,
 } from "./api.js";
+export { connectRpc, type ConnectRpcOptions } from "./remote-rpc.js";
 export {
   PiRpc,
   type PiRpcCommand,

@@ -54,11 +54,7 @@ export class PiRpc {
     const sessionArgs = this.options.continueSession === false
       ? ["--no-session"]
       : ["--continue", "--session-dir", sessionDir];
-    const child = spawn(process.execPath, [cliPath, "--mode", "rpc", ...sessionArgs, "--approve"], {
-      cwd: this.options.cwd,
-      env: { ...process.env, PI_CODING_AGENT_DIR: this.options.agentDir },
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+    const child = this.spawnProcess(cliPath, sessionArgs);
     this.child = child;
 
     child.stderr.on("data", (chunk: Buffer) => process.stderr.write(`[pi] ${chunk.toString()}`));
@@ -250,11 +246,25 @@ export class PiRpc {
   async stop(): Promise<void> {
     this.stopping = true;
     const child = this.child;
-    if (!child || child.exitCode !== null) return;
+    if (!child || child.exitCode !== null || child.signalCode !== null) return;
     child.kill("SIGTERM");
     await new Promise<void>((resolve) => {
       const timeout = setTimeout(() => { child.kill("SIGKILL"); }, 5_000);
       child.once("exit", () => { clearTimeout(timeout); resolve(); });
+    });
+  }
+
+  /** Close the RPC transport. Alias for stop(). */
+  close(): Promise<void> {
+    return this.stop();
+  }
+
+  /** Create the process carrying JSONL. Remote transports override this. */
+  protected spawnProcess(cliPath: string, sessionArgs: string[]): ChildProcessWithoutNullStreams {
+    return spawn(process.execPath, [cliPath, "--mode", "rpc", ...sessionArgs, "--approve"], {
+      cwd: this.options.cwd,
+      env: { ...process.env, PI_CODING_AGENT_DIR: this.options.agentDir },
+      stdio: ["pipe", "pipe", "pipe"],
     });
   }
 

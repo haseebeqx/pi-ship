@@ -85,7 +85,28 @@ and direct bash execution. `onEvent()` receives the complete event stream, inclu
 tool execution events. `send()` accepts any typed Pi RPC command and returns its
 correlated response (including `data`) for lower-level access.
 
-`PiRpc` runs Pi locally in a child process. `connect()` opens Pi on a server deployed by Pi Ship.
+`PiRpc` runs Pi locally in a child process. For the same programmable API on a
+server deployed by Pi Ship, use `connectRpc()`:
+
+```typescript
+import { connectRpc } from "pi-ship";
+
+const pi = await connectRpc({
+  server: "my-pi",
+  sessionKey: "telegram:123",
+});
+
+const unsubscribe = pi.onEvent((event) => console.log(event));
+await pi.prompt("List the files in the remote workspace");
+unsubscribe();
+await pi.close();
+```
+
+`sessionKey` selects an isolated persistent remote session; reconnecting with the
+same key continues it. The key is hashed before it is used as a remote directory
+name. `server` accepts either a saved Pi Ship name or an SSH target, and
+`certificate` can override the saved SSH identity file. `connect()` remains the
+interactive terminal API.
 
 ## Quick start
 

@@ -4,6 +4,7 @@ import {
   PiRpc,
   configureChannel,
   connect,
+  connectRpc,
   deploy,
   logs,
   status,
@@ -12,7 +13,7 @@ import {
 } from "../src/index.js";
 
 test("public library entry point is side-effect free and exports its API", () => {
-  for (const value of [PiRpc, configureChannel, connect, deploy, logs, status, update, updatePi]) {
+  for (const value of [PiRpc, configureChannel, connect, connectRpc, deploy, logs, status, update, updatePi]) {
     assert.equal(typeof value, "function");
   }
 });
