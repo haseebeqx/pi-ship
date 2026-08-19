@@ -9,8 +9,8 @@ import {
 } from "./commands.js";
 
 export interface ConnectionOptions {
-  /** A saved Pi Ship server name or an SSH target such as user@example.com. */
-  server: string;
+  /** A saved Pi Ship server name or SSH target. Uses PI_SHIP_SERVER or the saved default when omitted. */
+  server?: string;
   /** SSH identity file. Paths beginning with ~/ are supported. */
   certificate?: string;
 }
@@ -23,6 +23,8 @@ export type ChannelOptions =
 export type DeployOptions = ConnectionOptions & ChannelOptions & {
   /** Name under which the connection is saved locally. */
   name: string;
+  /** Make this server the default. The first saved server becomes the default automatically. */
+  default?: boolean;
 };
 
 export interface ConnectOptions extends ConnectionOptions {
@@ -41,6 +43,7 @@ export interface UpdatePiOptions extends ConnectionOptions {
 export function deploy(options: DeployOptions): Promise<void> {
   const args = connectionArgs(options);
   args.push("--name", options.name, "--channel", options.channel ?? "none");
+  if (options.default) args.push("--default");
   appendChannelArgs(args, options);
   return deployCommand(args);
 }
@@ -83,7 +86,8 @@ export function logs(options: ConnectionOptions): Promise<void> {
 }
 
 function connectionArgs(options: ConnectionOptions): string[] {
-  const args = ["--server", options.server];
+  const args: string[] = [];
+  if (options.server) args.push("--server", options.server);
   if (options.certificate) args.push("--certificate", options.certificate);
   return args;
 }

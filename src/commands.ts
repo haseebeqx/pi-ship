@@ -5,7 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface, emitKeypressEvents } from "node:readline";
 import { hashPairingCode } from "./pairing.js";
-import { resolveServer, saveServer } from "./inventory.js";
+import { impliedServer, resolveServer, saveServer } from "./inventory.js";
 import type { ServerConnection } from "./inventory.js";
 import { run, shellQuote } from "./process.js";
 import { compareVersions, validateVersion } from "./version.js";
@@ -30,11 +30,11 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
 
 export async function deployCommand(args: string[]): Promise<void> {
   const options = parseOptions(args, [
-    "--server", "--certificate", "--name", "--channel",
+    "--server", "--certificate", "--name", "--channel", "--default",
     "--telegram-bot-token", "--slack-bot-token", "--slack-app-token",
-  ]);
+  ], ["--default"]);
   const interactive = process.stdin.isTTY && process.stdout.isTTY && deployNeedsInput(options);
-  const target = await required(options, "--server", "SSH server (user@host): ");
+  const target = await selectedServer(options, "SSH server (user@host): ", false);
   const certificate = options.get("--certificate")
     ?? (interactive ? await prompt("SSH identity file (optional, press Enter to use password/agent): ") : undefined);
   const name = await required(options, "--name", "Name this Pi", { defaultValue: "my-pi" });
@@ -82,6 +82,7 @@ export async function deployCommand(args: string[]): Promise<void> {
   }
 
   const temporary = await mkdtemp(join(tmpdir(), "pi-ship-"));
+  let madeDefault = false;
   try {
     const root = packageRoot();
     const archive = join(temporary, "pi-ship.tgz");
@@ -103,7 +104,7 @@ export async function deployCommand(args: string[]): Promise<void> {
     const install = `${remoteDir}/install.sh install ${remoteDir}/pi-ship.tgz ${remoteDir}/config.json ${remoteDir}/secrets.json ${shellQuote(version)}`;
     const elevate = `if [ \"$(id -u)\" = 0 ]; then bash ${install}; else sudo -n bash ${install}; fi`;
     await run("ssh", sshArgs(connection, withRemoteCleanup(remoteDir, elevate)));
-    await saveServer(name, connection);
+    madeDefault = await saveServer(name, connection, options.has("--default"));
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }
@@ -118,15 +119,17 @@ export async function deployCommand(args: string[]): Promise<void> {
     console.log("\nAfter pairing, that Slack user can mention the app in channels or send direct messages.");
   } else {
     console.log("\nPi will run only while you are connected. Start a one-off session with:");
-    console.log(`  pi-ship pi --server ${name}`);
+    console.log(madeDefault ? "  pi-ship pi" : `  pi-ship pi --server ${name}`);
   }
-  console.log(`\nCheck it later with: pi-ship status --server ${name}`);
+  console.log(madeDefault
+    ? "\nCheck it later with: pi-ship status"
+    : `\nCheck it later with: pi-ship status --server ${name}`);
 }
 
 export async function connectCommand(args: string[]): Promise<void> {
   const { shipArgs, piArgs } = splitPiArgs(args);
   const options = parseOptions(shipArgs, ["--server", "--certificate"]);
-  const server = await required(options, "--server", "Server (saved name or user@host): ");
+  const server = await selectedServer(options);
   const connection = await resolveServer(server, certificateOption(options));
   const executable = "sudo -n -u pi-ship env HOME=/var/lib/pi-ship PATH=/opt/pi-ship/node/bin:/usr/local/bin:/usr/bin:/bin PI_SHIP_CONFIG=/etc/pi-ship/config.json /opt/pi-ship/app/bin/pi-ship-pi";
   const remoteCommand = [executable, ...piArgs.map(shellQuote)].join(" ");
@@ -139,7 +142,7 @@ export async function configureChannelCommand(args: string[]): Promise<void> {
     "--server", "--certificate", "--channel",
     "--telegram-bot-token", "--slack-bot-token", "--slack-app-token",
   ]);
-  const server = await required(options, "--server", "Server (saved name or user@host): ");
+  const server = await selectedServer(options);
   const connection = await resolveServer(server, certificateOption(options));
   const currentText = await run("ssh", sshArgs(connection, "sudo -n cat /etc/pi-ship/config.json"), { capture: true });
   const current = JSON.parse(currentText) as ShipConfig;
@@ -205,7 +208,7 @@ export async function configureChannelCommand(args: string[]): Promise<void> {
 
 export async function updateCommand(args: string[]): Promise<void> {
   const options = parseOptions(args, ["--server", "--certificate"]);
-  const name = await required(options, "--server", "Server (saved name or user@host): ");
+  const name = await selectedServer(options);
   const connection = await resolveServer(name, certificateOption(options));
   const { target } = connection;
   const root = packageRoot();
@@ -236,7 +239,7 @@ export async function updateCommand(args: string[]): Promise<void> {
 
 export async function updatePiCommand(args: string[]): Promise<void> {
   const options = parseOptions(args, ["--server", "--certificate", "--version"]);
-  const name = await required(options, "--server", "Server (saved name or user@host): ");
+  const name = await selectedServer(options);
   const connection = await resolveServer(name, certificateOption(options));
   const packageName = "@earendil-works/pi-coding-agent";
   const installedCommand = `/opt/pi-ship/node/bin/node -p ${shellQuote(`require('/opt/pi-ship/app/lib/node_modules/pi-ship/node_modules/${packageName}/package.json').version`)}`;
@@ -264,7 +267,7 @@ export async function updatePiCommand(args: string[]): Promise<void> {
 
 export async function statusCommand(args: string[]): Promise<void> {
   const options = parseOptions(args, ["--server", "--certificate"]);
-  const server = await required(options, "--server", "Server (saved name or user@host): ");
+  const server = await selectedServer(options);
   const connection = await resolveServer(server, certificateOption(options));
   const remoteCommand = "printf 'Runtime version: '; cat /opt/pi-ship/version; printf 'Pi version: '; /opt/pi-ship/node/bin/node -p \"require('/opt/pi-ship/app/lib/node_modules/pi-ship/node_modules/@earendil-works/pi-coding-agent/package.json').version\" && if sudo -n systemctl is-enabled --quiet pi-ship.service; then printf 'Mode: communication provider (persistent)\\n'; sudo -n systemctl is-active pi-ship.service; sudo -n systemctl --no-pager --full status pi-ship.service | head -n 12; else printf 'Mode: connect (on demand)\\n'; fi";
   const output = await run("ssh", sshArgs(connection, remoteCommand), { capture: true });
@@ -273,7 +276,7 @@ export async function statusCommand(args: string[]): Promise<void> {
 
 export async function logsCommand(args: string[]): Promise<void> {
   const options = parseOptions(args, ["--server", "--certificate"]);
-  const server = await required(options, "--server", "Server (saved name or user@host): ");
+  const server = await selectedServer(options);
   const connection = await resolveServer(server, certificateOption(options));
   await run("ssh", sshArgs(connection, "-t", "sudo -n journalctl -u pi-ship.service -n 100 -f"));
 }
@@ -281,15 +284,15 @@ export async function logsCommand(args: string[]): Promise<void> {
 function printHelp(): void {
   console.log(`pi-ship
 
-  deploy --server <user@host> --name <name>
+  deploy --server <user@host> --name <name> [--default]
          [--channel <telegram|slack|none> [channel credentials]] [--certificate <path>]
-  pi      --server <name-or-user@host> [--certificate <path>] [-- <pi-args...>]
-  channel --server <name-or-user@host> [--channel <telegram|slack|none>]
+  pi      [--server <name-or-user@host>] [--certificate <path>] [-- <pi-args...>]
+  channel [--server <name-or-user@host>] [--channel <telegram|slack|none>]
           [channel credentials] [--certificate <path>]
-  update    --server <name-or-user@host> [--certificate <path>]
-  update-pi --server <name-or-user@host> [--certificate <path>] [--version <semver>]
-  status    --server <name-or-user@host> [--certificate <path>]
-  logs   --server <name-or-user@host> [--certificate <path>]
+  update    [--server <name-or-user@host>] [--certificate <path>]
+  update-pi [--server <name-or-user@host>] [--certificate <path>] [--version <semver>]
+  status    [--server <name-or-user@host>] [--certificate <path>]
+  logs      [--server <name-or-user@host>] [--certificate <path>]
 
 Deploy channel credentials:
   Telegram: --telegram-bot-token <token>
@@ -298,7 +301,9 @@ Deploy channel credentials:
 Without --channel, Pi runs only for one-off sessions opened by pi.
 Run channel interactively to add, replace, reconfigure, or remove a messaging provider.
 Arguments after -- are passed directly to Pi; for example: pi-ship pi --server my-pi -- install npm:@foo/bar
-Missing required options are prompted for when running in a terminal.
+Missing required options are prompted for when running in a terminal. For remote
+commands, an omitted --server uses PI_SHIP_SERVER and then the saved default.
+The first deployed server becomes the default; --default replaces it.
 Authenticate model providers from Pi with /login. Channel credentials may also
 be supplied through PI_SHIP_TELEGRAM_TOKEN, PI_SHIP_SLACK_BOT_TOKEN, and
 PI_SHIP_SLACK_APP_TOKEN.
@@ -354,7 +359,7 @@ function splitPiArgs(args: string[]): { shipArgs: string[]; piArgs: string[] } {
   return { shipArgs, piArgs: [] };
 }
 
-function parseOptions(args: string[], allowed: string[]): Map<string, string> {
+function parseOptions(args: string[], allowed: string[], flags: string[] = []): Map<string, string> {
   const options = new Map<string, string>();
   const seen = new Set<string>();
   for (let index = 0; index < args.length;) {
@@ -364,6 +369,11 @@ function parseOptions(args: string[], allowed: string[]): Map<string, string> {
     if (seen.has(name)) throw new Error(`Option supplied more than once: ${name}`);
     seen.add(name);
 
+    if (flags.includes(name)) {
+      options.set(name, "true");
+      index += 1;
+      continue;
+    }
     const value = args[index + 1];
     if (value !== undefined && !value.startsWith("--")) {
       options.set(name, value);
@@ -379,6 +389,17 @@ function parseOptions(args: string[], allowed: string[]): Map<string, string> {
 interface PromptOptions {
   defaultValue?: string;
   secret?: boolean;
+}
+
+async function selectedServer(
+  options: Map<string, string>,
+  question = "Server (saved name or user@host): ",
+  allowSavedDefault = true,
+): Promise<string> {
+  const selected = (options.get("--server") ?? process.env.PI_SHIP_SERVER)
+    || (allowSavedDefault ? await impliedServer() : undefined);
+  if (selected) return selected;
+  return required(options, "--server", question);
 }
 
 async function required(
@@ -470,7 +491,8 @@ async function promptSecret(question: string): Promise<string> {
 }
 
 function deployNeedsInput(options: Map<string, string>): boolean {
-  if (["--server", "--name", "--channel"].some((name) => !options.get(name))) return true;
+  if ((!options.get("--server") && !process.env.PI_SHIP_SERVER)
+    || ["--name", "--channel"].some((name) => !options.get(name))) return true;
   if (options.get("--channel") === "telegram") {
     return !options.get("--telegram-bot-token") && !process.env.PI_SHIP_TELEGRAM_TOKEN;
   }

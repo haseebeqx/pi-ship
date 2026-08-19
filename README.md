@@ -10,7 +10,7 @@ Direct sessions stream Pi's interactive terminal over SSH and stop when you disc
 - **One-command remote deployment** — install Pi, Node.js, configuration, and service management on any supported SSH-accessible server without configuring the server by hand.
 - **No exposed service** — Telegram long polling and Slack Socket Mode make outbound connections, so there are no public ports, webhooks, TLS certificates, or reverse proxies to maintain.
 - **Messaging without Pi plugins** — Telegram and Slack are built-in transports in Pi Ship, not plugins loaded into the agent. Pi stays unchanged, the transports do not modify its prompt or tools, and you do not have to give a third-party integration plugin access to the agent's workspace and credentials.
-- **Direct Pi access** — run `npx pi-ship pi --server <name>` to open Pi's full interactive terminal over SSH, without logging into the server or managing a remote command yourself.
+- **Direct Pi access** — run `npx pi-ship pi` to open Pi's full interactive terminal over SSH using the default server, without logging into the server or managing a remote command yourself.
 - **On demand or always available** — use a fresh interactive Pi terminal with no idle process, or run a persistent agent through a messaging channel.
 - **Native messaging** — Pi's output streams into Telegram and Slack with rate-limited edits, message continuation, Markdown adaptation, reply context, attachments, reactions, and live tool status.
 - **Channel controls** — stop active work and manage models, thinking levels, and conversation sessions without opening a terminal.
@@ -41,8 +41,7 @@ await deploy({
 });
 
 await connect({
-  server: "my-pi",
-  piArgs: ["--no-session"],
+  piArgs: ["--no-session"], // Uses the saved default server.
 });
 ```
 
@@ -104,9 +103,9 @@ await pi.close();
 
 `sessionKey` selects an isolated persistent remote session; reconnecting with the
 same key continues it. The key is hashed before it is used as a remote directory
-name. `server` accepts either a saved Pi Ship name or an SSH target, and
-`certificate` can override the saved SSH identity file. `connect()` remains the
-interactive terminal API.
+name. `server` accepts either a saved Pi Ship name or an SSH target. When omitted,
+`PI_SHIP_SERVER` or the saved default is used. `certificate` can override the saved
+SSH identity file. `connect()` remains the interactive terminal API.
 
 ## Quick start
 
@@ -118,10 +117,10 @@ Requires Node.js 22.19 or newer on your local machine, plus SSH access to an Ubu
 npx pi-ship deploy
 ```
 
-Pi Ship asks for the server details, optionally lets you enter an SSH identity file, and then offers Telegram, Slack, or no messaging provider. None is the default and installs in on-demand mode without leaving an agent process running. Start Pi after deployment with:
+Pi Ship asks for the server details, optionally lets you enter an SSH identity file, and then offers Telegram, Slack, or no messaging provider. None is the default and installs in on-demand mode without leaving an agent process running. The first deployed server becomes the default, so start Pi with:
 
 ```bash
-npx pi-ship pi --server my-pi
+npx pi-ship pi
 ```
 
 This opens a fresh, ephemeral Pi terminal session on the server. Nothing needs to be installed globally. Use Pi's `/login` command to authenticate any supported provider, then select a model with `/model` or Ctrl+L. Authentication is saved on the server for later sessions.
@@ -160,9 +159,9 @@ npx pi-ship deploy \
   --telegram-bot-token "$TELEGRAM_BOT_TOKEN"
 ```
 
-A certificate supplied during deployment is saved with the named server for later commands. Bot tokens can also be supplied through `PI_SHIP_TELEGRAM_TOKEN`, `PI_SHIP_SLACK_BOT_TOKEN`, and `PI_SHIP_SLACK_APP_TOKEN`. Be aware that secrets passed directly on the command line may be visible to other local processes while the command runs.
+A certificate supplied during deployment is saved with the named server for later commands. The first deployed server becomes the default automatically; pass `--default` on a later deployment to replace it. For any remote command, an explicit `--server` takes precedence over `PI_SHIP_SERVER`, which takes precedence over the saved default. Bot tokens can also be supplied through `PI_SHIP_TELEGRAM_TOKEN`, `PI_SHIP_SLACK_BOT_TOKEN`, and `PI_SHIP_SLACK_APP_TOKEN`. Be aware that secrets passed directly on the command line may be visible to other local processes while the command runs.
 
-Pi Ship does not restrict or configure Pi's model providers. Before using a persistent Telegram or Slack channel, run `pi-ship pi --server my-pi` and authenticate through Pi's `/login` command.
+Pi Ship does not restrict or configure Pi's model providers. Before using a persistent Telegram or Slack channel, run `pi-ship pi` (or select another server explicitly) and authenticate through Pi's `/login` command.
 
 After deployment, send the displayed pairing command to the Telegram bot:
 
@@ -225,13 +224,13 @@ Use `npx pi-ship <command>`. If installed globally, replace `npx pi-ship` with `
 
 | Command | Purpose | Usage |
 | --- | --- | --- |
-| `deploy` | Install Pi Ship on a server and save the server locally | `npx pi-ship deploy --server <user@host> --name <name> [options]` |
-| `pi` | Open an on-demand Pi session or invoke the remote Pi CLI | `npx pi-ship pi --server <name-or-user@host> [--certificate <path>] [-- <pi-args...>]` |
-| `channel` | Add, replace, reconfigure, or remove a messaging provider | `npx pi-ship channel --server <name-or-user@host> [options]` |
-| `update` | Update the remote Pi Ship runtime when the local package is newer | `npx pi-ship update --server <name-or-user@host> [--certificate <path>]` |
-| `update-pi` | Update Pi independently of the Pi Ship runtime | `npx pi-ship update-pi --server <name-or-user@host> [--certificate <path>] [--version <semver>]` |
-| `status` | Show runtime versions, mode, and service status | `npx pi-ship status --server <name-or-user@host> [--certificate <path>]` |
-| `logs` | Follow the latest 100 persistent-service log entries | `npx pi-ship logs --server <name-or-user@host> [--certificate <path>]` |
+| `deploy` | Install Pi Ship on a server and save the server locally | `npx pi-ship deploy --server <user@host> --name <name> [--default] [options]` |
+| `pi` | Open an on-demand Pi session or invoke the remote Pi CLI | `npx pi-ship pi [--server <name-or-user@host>] [--certificate <path>] [-- <pi-args...>]` |
+| `channel` | Add, replace, reconfigure, or remove a messaging provider | `npx pi-ship channel [--server <name-or-user@host>] [options]` |
+| `update` | Update the remote Pi Ship runtime when the local package is newer | `npx pi-ship update [--server <name-or-user@host>] [--certificate <path>]` |
+| `update-pi` | Update Pi independently of the Pi Ship runtime | `npx pi-ship update-pi [--server <name-or-user@host>] [--certificate <path>] [--version <semver>]` |
+| `status` | Show runtime versions, mode, and service status | `npx pi-ship status [--server <name-or-user@host>] [--certificate <path>]` |
+| `logs` | Follow the latest 100 persistent-service log entries | `npx pi-ship logs [--server <name-or-user@host>] [--certificate <path>]` |
 | `help` | Show built-in CLI help | `npx pi-ship help` (also `--help` or `-h`) |
 
 ### Options
@@ -241,27 +240,28 @@ Use `npx pi-ship <command>`. If installed globally, replace `npx pi-ship` with `
 | `deploy` | `--server` | `<user@host>` | Yes | SSH destination. |
 | `deploy` | `--name` | `<name>` | Yes | Saved server name: 1–32 letters, numbers, underscores, or hyphens, starting with a letter or number. Interactive default: `my-pi`. |
 | `deploy` | `--certificate` | `<path>` | No | SSH identity file. Supports `~` and `~/...`; saved with the named server. |
+| `deploy` | `--default` | — | No | Make this saved server the default. The first saved server becomes the default automatically. |
 | `deploy` | `--channel` | `telegram`, `slack`, `none`, or `connect` | No | Messaging mode. `none` (the default) and its alias `connect` use on-demand mode. |
 | `deploy` | `--telegram-bot-token` | `<token>` | For Telegram | Telegram bot token. Falls back to `PI_SHIP_TELEGRAM_TOKEN`. |
 | `deploy` | `--slack-bot-token` | `<xoxb-token>` | For Slack | Slack bot token. Falls back to `PI_SHIP_SLACK_BOT_TOKEN`. |
 | `deploy` | `--slack-app-token` | `<xapp-token>` | For Slack | Slack Socket Mode app token. Falls back to `PI_SHIP_SLACK_APP_TOKEN`. |
-| `pi` | `--server` | `<name-or-user@host>` | Yes | A saved server name or direct SSH destination. |
+| `pi` | `--server` | `<name-or-user@host>` | No | A saved server name or direct SSH destination. Falls back to `PI_SHIP_SERVER`, then the default. |
 | `pi` | `--certificate` | `<path>` | No | Override the saved SSH identity file. |
 | `pi` | `--` | `<pi-args...>` | No | Stop parsing Pi Ship options and pass all remaining arguments to Pi, for example `-- install npm:@foo/bar`. |
-| `channel` | `--server` | `<name-or-user@host>` | Yes | A saved server name or direct SSH destination. |
+| `channel` | `--server` | `<name-or-user@host>` | No | A saved server name or direct SSH destination. Falls back to `PI_SHIP_SERVER`, then the default. |
 | `channel` | `--certificate` | `<path>` | No | Override the saved SSH identity file. |
 | `channel` | `--channel` | `telegram`, `slack`, `none`, or `connect` | Yes for non-interactive use | Select a provider; `none` and `connect` disable persistent messaging. Omit in a terminal to use the menu. |
 | `channel` | `--telegram-bot-token` | `<token>` | For Telegram | Telegram bot token. Falls back to `PI_SHIP_TELEGRAM_TOKEN`. |
 | `channel` | `--slack-bot-token` | `<xoxb-token>` | For Slack | Slack bot token. Falls back to `PI_SHIP_SLACK_BOT_TOKEN`. |
 | `channel` | `--slack-app-token` | `<xapp-token>` | For Slack | Slack Socket Mode app token. Falls back to `PI_SHIP_SLACK_APP_TOKEN`. |
-| `update` | `--server` | `<name-or-user@host>` | Yes | A saved server name or direct SSH destination. |
+| `update` | `--server` | `<name-or-user@host>` | No | A saved server name or direct SSH destination. Falls back to `PI_SHIP_SERVER`, then the default. |
 | `update` | `--certificate` | `<path>` | No | Override the saved SSH identity file. |
-| `update-pi` | `--server` | `<name-or-user@host>` | Yes | A saved server name or direct SSH destination. |
+| `update-pi` | `--server` | `<name-or-user@host>` | No | A saved server name or direct SSH destination. Falls back to `PI_SHIP_SERVER`, then the default. |
 | `update-pi` | `--certificate` | `<path>` | No | Override the saved SSH identity file. |
 | `update-pi` | `--version` | `<semver>` | No | Install a specific newer Pi version; defaults to the latest npm release. |
-| `status` | `--server` | `<name-or-user@host>` | Yes | A saved server name or direct SSH destination. |
+| `status` | `--server` | `<name-or-user@host>` | No | A saved server name or direct SSH destination. Falls back to `PI_SHIP_SERVER`, then the default. |
 | `status` | `--certificate` | `<path>` | No | Override the saved SSH identity file. |
-| `logs` | `--server` | `<name-or-user@host>` | Yes | A saved server name or direct SSH destination. |
+| `logs` | `--server` | `<name-or-user@host>` | No | A saved server name or direct SSH destination. Falls back to `PI_SHIP_SERVER`, then the default. |
 | `logs` | `--certificate` | `<path>` | No | Override the saved SSH identity file. |
 
 Missing required values are requested when running in an interactive terminal. In non-interactive environments, supply them as options or, for credentials, through the listed environment variables. Options cannot be repeated.
