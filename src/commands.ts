@@ -152,10 +152,15 @@ export async function deployCommand(args: string[]): Promise<void> {
 
 export async function connectCommand(args: string[]): Promise<void> {
   const { shipArgs, piArgs } = splitPiArgs(args);
-  const options = parseOptions(shipArgs, ["--server", "--certificate"]);
+  const options = parseOptions(shipArgs, ["--server", "--certificate", "--cwd"]);
   const server = await selectedServer(options);
   const connection = await resolveServer(server, certificateOption(options));
-  const executable = "sudo -n -u pi-ship env HOME=/var/lib/pi-ship PATH=/opt/pi-ship/node/bin:/usr/local/bin:/usr/bin:/bin PI_SHIP_CONFIG=/etc/pi-ship/config.json /opt/pi-ship/app/bin/pi-ship-pi";
+  const cwd = options.get("--cwd");
+  if (cwd && (!cwd.startsWith("/") || /[\n\0]/.test(cwd))) {
+    throw new Error("--cwd must be an absolute path on the server");
+  }
+  const workspaceOverride = cwd ? ` PI_SHIP_WORKSPACE=${shellQuote(cwd)}` : "";
+  const executable = `sudo -n -u pi-ship env HOME=/var/lib/pi-ship PATH=/opt/pi-ship/node/bin:/usr/local/bin:/usr/bin:/bin PI_SHIP_CONFIG=/etc/pi-ship/config.json${workspaceOverride} /opt/pi-ship/app/bin/pi-ship-pi`;
   const remoteCommand = [executable, ...piArgs.map(shellQuote)].join(" ");
   const ttyArgs = process.stdin.isTTY && process.stdout.isTTY ? ["-t"] : [];
   await run("ssh", sshArgs(connection, ...ttyArgs, remoteCommand));
@@ -362,11 +367,18 @@ With no Pi arguments, this opens an interactive, on-demand terminal session.
 Arguments after Pi Ship options (or after --) are passed to the remote Pi CLI.
 
 Usage:
-  pi-ship pi [--server <name-or-user@host>] [--certificate <path>] [-- <pi-args...>]
+  pi-ship pi [--server <name-or-user@host>] [--certificate <path>]
+             [--cwd <absolute-server-path>] [-- <pi-args...>]
+
+Options:
+  --server <name-or-user@host>       Server to connect to
+  --certificate <path>              SSH identity file
+  --cwd <absolute-server-path>       Run Pi in this project directory on the server
 
 Examples:
   pi-ship pi
   pi-ship pi --server production
+  pi-ship pi --cwd /srv/my-project
   pi-ship pi --server production -- install npm:@foo/bar`,
   config: `Change server-wide Pi Ship defaults without redeploying.
 
@@ -475,7 +487,7 @@ async function createArchive(root: string, archive: string): Promise<void> {
 
 function splitPiArgs(args: string[]): { shipArgs: string[]; piArgs: string[] } {
   const shipArgs: string[] = [];
-  const shipOptions = new Set(["--server", "--certificate"]);
+  const shipOptions = new Set(["--server", "--certificate", "--cwd"]);
 
   for (let index = 0; index < args.length;) {
     const arg = args[index]!;

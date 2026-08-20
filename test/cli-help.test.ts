@@ -41,6 +41,13 @@ test("command help shows purpose, usage, and relevant options", async () => {
   assert.match(output, /--session-mode <mode>/);
 });
 
+test("pi help documents the remote working directory", async () => {
+  const output = await captureHelp(["pi", "--help"]);
+
+  assert.match(output, /--cwd <absolute-server-path>/);
+  assert.match(output, /pi-ship pi --cwd \/srv\/my-project/);
+});
+
 test("config help documents the server-wide session default", async () => {
   const output = await captureHelp(["config", "--help"]);
 

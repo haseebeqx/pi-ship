@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import { mkdir } from "node:fs/promises";
+import { isAbsolute } from "node:path";
 import { fileURLToPath } from "node:url";
 import { defaultInteractivePiArgs, loadJson, type ShipConfig, type ShipSecrets } from "./config.js";
 import { runtimePiArgs, validateRuntimeProfile, validateRuntimeSecrets } from "./runtime-profile.js";
@@ -12,7 +13,9 @@ const secrets = await loadJson<ShipSecrets>(secretsPath);
 validateRuntimeProfile(config.runtime);
 validateRuntimeSecrets(secrets.runtime);
 
-await mkdir(config.workspace, { recursive: true });
+const workspace = process.env.PI_SHIP_WORKSPACE ?? config.workspace;
+if (!isAbsolute(workspace)) throw new Error("Pi Ship workspace must be an absolute path");
+await mkdir(workspace, { recursive: true });
 await mkdir(config.agentDir, { recursive: true });
 
 const piModule = import.meta.resolve("@earendil-works/pi-coding-agent");
@@ -20,7 +23,7 @@ const cliPath = fileURLToPath(new URL("cli.js", piModule));
 const forwardedArgs = process.argv.slice(2);
 const piArgs = [...runtimePiArgs(config.runtime), ...(forwardedArgs.length > 0 ? forwardedArgs : defaultInteractivePiArgs(config))];
 const child = spawn(process.execPath, [cliPath, ...piArgs], {
-  cwd: config.workspace,
+  cwd: workspace,
   env: {
     ...process.env,
     ...config.runtime?.environment,

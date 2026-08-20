@@ -41,6 +41,8 @@ export type DeployOptions = ConnectionOptions & ChannelOptions & {
 };
 
 export interface ConnectOptions extends ConnectionOptions {
+  /** Absolute project directory in which to run Pi on the server. */
+  cwd?: string;
   /** Arguments forwarded to the remote Pi process. */
   piArgs?: readonly string[];
 }
@@ -90,6 +92,7 @@ export async function deploy(options: DeployOptions): Promise<void> {
 /** Open an interactive or argument-driven Pi session on a deployed server. */
 export function connect(options: ConnectOptions): Promise<void> {
   const args = connectionArgs(options);
+  if (options.cwd) args.push("--cwd", options.cwd);
   if (options.piArgs?.length) args.push("--", ...options.piArgs);
   return connectCommand(args);
 }

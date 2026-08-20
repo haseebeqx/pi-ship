@@ -9,7 +9,7 @@ Use `npx pi-ship <command>`. If installed globally, replace `npx pi-ship` with `
 | Command | Purpose | Usage |
 | --- | --- | --- |
 | `deploy` | Install Pi Ship on a server and save the server locally | `npx pi-ship deploy --server <user@host> --name <name> [--default] [options]` |
-| `pi` | Open an on-demand Pi session or invoke the remote Pi CLI | `npx pi-ship pi [--server <name-or-user@host>] [--certificate <path>] [-- <pi-args...>]` |
+| `pi` | Open an on-demand Pi session or invoke the remote Pi CLI | `npx pi-ship pi [--server <name-or-user@host>] [--certificate <path>] [--cwd <absolute-server-path>] [-- <pi-args...>]` |
 | `channel` | Add, replace, reconfigure, or remove a messaging provider | `npx pi-ship channel [--server <name-or-user@host>] [options]` |
 | `config` | Change server-wide defaults | `npx pi-ship config [--server <name-or-user@host>] --session-mode <ephemeral|persistent>` |
 | `update` | Update the remote Pi Ship runtime when the local package is newer | `npx pi-ship update [--server <name-or-user@host>] [--certificate <path>]` |
@@ -35,6 +35,7 @@ Use `npx pi-ship <command>`. If installed globally, replace `npx pi-ship` with `
 | `deploy` | `--runtime-secrets` | `<json-file>` | No | Generic `RuntimeSecrets` JSON; only the path, never its contents, is placed on the command line. |
 | `pi` | `--server` | `<name-or-user@host>` | No | A saved server name or direct SSH destination. Falls back to `PI_SHIP_SERVER`, then the default. |
 | `pi` | `--certificate` | `<path>` | No | Override the saved SSH identity file. |
+| `pi` | `--cwd` | `<absolute-server-path>` | No | Run Pi in this project directory on the server instead of the default workspace. The `pi-ship` server user must be able to access it. |
 | `pi` | `--` | `<pi-args...>` | No | Stop parsing Pi Ship options and pass all remaining arguments to Pi, for example `-- install npm:@foo/bar`. |
 | `channel` | `--server` | `<name-or-user@host>` | No | A saved server name or direct SSH destination. Falls back to `PI_SHIP_SERVER`, then the default. |
 | `channel` | `--certificate` | `<path>` | No | Override the saved SSH identity file. |
@@ -61,7 +62,7 @@ Missing required values are requested when running in an interactive terminal. I
 
 `channel` shows an interactive menu for adding, replacing, reconfiguring, or removing Telegram and Slack. Reconfiguring resets the sender allowlist and prints a new one-time pairing code. To automate it, pass `--channel telegram`, `--channel slack`, or `--channel none` together with the applicable credentials. Provider changes are applied atomically; if the new persistent provider cannot start, Pi Ship restores the previous configuration and service.
 
-`pi` with no Pi arguments uses the server's interactive session mode. The default is `ephemeral`, which starts a fresh, unsaved Pi TUI. Set it to `persistent` with `pi-ship config --session-mode persistent`; future argument-free connections save sessions. Explicit arguments after `--` are passed directly to Pi and determine Pi's session behavior.
+`pi` with no Pi arguments uses the server's interactive session mode. Use `--cwd /absolute/server/path` to run it in another server-side project directory; relative paths are rejected. This does not switch to the SSH/login user: Pi still runs as `pi-ship`, which needs appropriate directory permissions, and Git may reject repositories owned by another user as having dubious ownership. See [Security](security.md#project-directory-access). The default is `ephemeral`, which starts a fresh, unsaved Pi TUI. Set it to `persistent` with `pi-ship config --session-mode persistent`; future argument-free connections save sessions. Explicit arguments after `--` are passed directly to Pi and determine Pi's session behavior.
 
 When Pi prints `pi --session <id>` after a remote persistent session, resume it through Pi Ship with `pi-ship pi -- --session <id> --approve`.
 

@@ -38,6 +38,12 @@ Then open Pi on the default server:
 npx pi-ship pi
 ```
 
+To work in another project directory on the server, pass its absolute path. Pi still runs as the dedicated `pi-ship` user—not the SSH user—so it must have access; see [Security](docs/security.md#project-directory-access):
+
+```bash
+npx pi-ship pi --cwd /srv/my-project
+```
+
 Interactive sessions are ephemeral by default. Set a server-wide saved-session default with `npx pi-ship config --session-mode persistent`.
 
 Use Pi's `/login` command to authenticate a model provider, then select a model with `/model` or <kbd>Ctrl</kbd>+<kbd>L</kbd>.

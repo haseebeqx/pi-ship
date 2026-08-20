@@ -22,6 +22,7 @@ await deploy({
 });
 
 await connect({}); // Uses the saved default server and its session mode.
+await connect({ cwd: "/srv/my-project" }); // Runs Pi in this server-side project.
 
 await configureServer({
   server: "my-pi",
