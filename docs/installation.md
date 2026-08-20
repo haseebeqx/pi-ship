@@ -30,6 +30,14 @@ npx pi-ship pi
 
 This opens a fresh, ephemeral Pi terminal session on the server. Nothing needs to be installed globally. Use Pi's `/login` command to authenticate any supported provider, then select a model with `/model` or Ctrl+L. Authentication is saved on the server for later sessions.
 
+To save interactive sessions by default on this server, run:
+
+```bash
+npx pi-ship config --session-mode persistent
+```
+
+Change it back with `--session-mode ephemeral`. You can also select the initial default during deployment with `pi-ship deploy --session-mode persistent`. When remote Pi prints a `pi --session <id>` resume hint, use `pi-ship pi -- --session <id> --approve` to resume through Pi Ship.
+
 If you leave the identity file blank, SSH uses your agent or default keys and can prompt for the server account's password normally. An encrypted identity file can likewise prompt for its passphrase. Because deployment opens several SSH/SCP connections, you may be prompted more than once unless an SSH agent caches the credential.
 
 You can provide the identity file up front and let Pi Ship ask for everything else:
@@ -48,7 +56,8 @@ For automation, provide the server options explicitly. This example uses the def
 npx pi-ship deploy \
   --server ubuntu@your-server \
   --certificate ~/.ssh/server.pem \
-  --name my-pi
+  --name my-pi \
+  --session-mode persistent
 
 npx pi-ship pi --server my-pi
 ```

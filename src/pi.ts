@@ -2,7 +2,7 @@
 import { spawn } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { loadJson, type ShipConfig, type ShipSecrets } from "./config.js";
+import { defaultInteractivePiArgs, loadJson, type ShipConfig, type ShipSecrets } from "./config.js";
 import { runtimePiArgs, validateRuntimeProfile, validateRuntimeSecrets } from "./runtime-profile.js";
 
 const configPath = process.env.PI_SHIP_CONFIG ?? "/etc/pi-ship/config.json";
@@ -18,7 +18,7 @@ await mkdir(config.agentDir, { recursive: true });
 const piModule = import.meta.resolve("@earendil-works/pi-coding-agent");
 const cliPath = fileURLToPath(new URL("cli.js", piModule));
 const forwardedArgs = process.argv.slice(2);
-const piArgs = [...runtimePiArgs(config.runtime), ...(forwardedArgs.length > 0 ? forwardedArgs : ["--no-session", "--approve"])];
+const piArgs = [...runtimePiArgs(config.runtime), ...(forwardedArgs.length > 0 ? forwardedArgs : defaultInteractivePiArgs(config))];
 const child = spawn(process.execPath, [cliPath, ...piArgs], {
   cwd: config.workspace,
   env: {

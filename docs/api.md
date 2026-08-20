@@ -11,17 +11,21 @@ npm install pi-ship
 ## Deploy and connect
 
 ```typescript
-import { connect, deploy } from "pi-ship";
+import { configureServer, connect, deploy } from "pi-ship";
 
 await deploy({
   server: "ubuntu@example.com",
   certificate: "~/.ssh/server.pem",
   name: "my-pi",
   channel: "none",
+  sessionMode: "persistent",
 });
 
-await connect({
-  piArgs: ["--no-session"], // Uses the saved default server.
+await connect({}); // Uses the saved default server and its session mode.
+
+await configureServer({
+  server: "my-pi",
+  sessionMode: "ephemeral",
 });
 ```
 
@@ -36,7 +40,7 @@ await deploy({
 });
 ```
 
-The package also exports `configureChannel`, `update`, `updatePi`, `status`, and `logs`. JavaScript uses the same API without type annotations.
+The package also exports `configureChannel`, `configureServer`, `update`, `updatePi`, `status`, and `logs`. JavaScript uses the same API without type annotations.
 
 Deployments can accept generic runtime settings. See [Runtime profiles and secrets](runtime-profiles.md).
 

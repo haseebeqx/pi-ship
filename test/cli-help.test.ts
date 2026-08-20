@@ -21,6 +21,7 @@ test("general help explains what each command does", async () => {
     "deploy      Install Pi Ship on a server over SSH",
     "pi          Open an interactive session or run the remote Pi CLI",
     "channel     Configure or disable Telegram or Slack messaging",
+    "config      Change server-wide interactive session defaults",
     "status      Show versions, operating mode, and service health",
     "logs        Follow logs from the persistent messaging service",
     "update      Update the Pi Ship runtime on a server",
@@ -37,6 +38,14 @@ test("command help shows purpose, usage, and relevant options", async () => {
   assert.match(output, /^deploy — Install Pi Ship on a Linux server over SSH/);
   assert.match(output, /Usage:\n  pi-ship deploy \[options\]/);
   assert.match(output, /--channel <telegram\|slack\|none>/);
+  assert.match(output, /--session-mode <mode>/);
+});
+
+test("config help documents the server-wide session default", async () => {
+  const output = await captureHelp(["config", "--help"]);
+
+  assert.match(output, /^config — Change server-wide Pi Ship defaults/);
+  assert.match(output, /--session-mode <ephemeral\|persistent>/);
 });
 
 test("help command accepts a command name", async () => {

@@ -1,10 +1,12 @@
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import type { InteractiveSessionMode } from "./config.js";
 import type { RuntimeProfile, RuntimeSecrets } from "./runtime-profile.js";
 import { validateRuntimeProfile, validateRuntimeSecrets } from "./runtime-profile.js";
 import {
   configureChannelCommand,
+  configureServerCommand,
   connectCommand,
   deployCommand,
   logsCommand,
@@ -30,6 +32,8 @@ export type DeployOptions = ConnectionOptions & ChannelOptions & {
   name: string;
   /** Make this server the default. The first saved server becomes the default automatically. */
   default?: boolean;
+  /** Default session persistence for argument-free interactive connections. */
+  sessionMode?: InteractiveSessionMode;
   /** Generic process, Pi, filesystem, and resource policy. */
   runtime?: RuntimeProfile;
   /** Secret files installed outside the workspace. Never included in RuntimeProfile. */
@@ -43,6 +47,11 @@ export interface ConnectOptions extends ConnectionOptions {
 
 export type ConfigureChannelOptions = ConnectionOptions & Exclude<ChannelOptions, { channel?: "none" }> | (ConnectionOptions & { channel: "none" });
 
+export interface ConfigureServerOptions extends ConnectionOptions {
+  /** Default session persistence for argument-free interactive connections. */
+  sessionMode: InteractiveSessionMode;
+}
+
 export interface UpdatePiOptions extends ConnectionOptions {
   /** Pi semver to install. The latest published version is used when omitted. */
   version?: string;
@@ -55,6 +64,7 @@ export async function deploy(options: DeployOptions): Promise<void> {
   const args = connectionArgs(options);
   args.push("--name", options.name, "--channel", options.channel ?? "none");
   if (options.default) args.push("--default");
+  if (options.sessionMode) args.push("--session-mode", options.sessionMode);
   appendChannelArgs(args, options);
   if (!options.runtime && !options.runtimeSecrets) return deployCommand(args);
 
@@ -90,6 +100,13 @@ export function configureChannel(options: ConfigureChannelOptions): Promise<void
   args.push("--channel", options.channel);
   appendChannelArgs(args, options);
   return configureChannelCommand(args);
+}
+
+/** Change server-wide defaults without redeploying. */
+export function configureServer(options: ConfigureServerOptions): Promise<void> {
+  const args = connectionArgs(options);
+  args.push("--session-mode", options.sessionMode);
+  return configureServerCommand(args);
 }
 
 /** Update Pi Ship itself on a deployed server. */

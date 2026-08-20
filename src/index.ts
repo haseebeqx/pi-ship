@@ -1,5 +1,6 @@
 export {
   configureChannel,
+  configureServer,
   connect,
   deploy,
   logs,
@@ -8,6 +9,7 @@ export {
   updatePi,
   type ChannelOptions,
   type ConfigureChannelOptions,
+  type ConfigureServerOptions,
   type ConnectionOptions,
   type ConnectOptions,
   type DeployOptions,
@@ -31,7 +33,13 @@ export {
   type SessionManagerOptions,
   type SessionRpc,
 } from "./session-manager.js";
-export type { ShipConfig, ShipSecrets } from "./config.js";
+export {
+  defaultInteractivePiArgs,
+  validateInteractiveSessionMode,
+  type InteractiveSessionMode,
+  type ShipConfig,
+  type ShipSecrets,
+} from "./config.js";
 export {
   runtimePiArgs,
   validateRuntimeProfile,

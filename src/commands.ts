@@ -9,7 +9,7 @@ import { impliedServer, resolveServer, saveServer } from "./inventory.js";
 import type { ServerConnection } from "./inventory.js";
 import { run, shellQuote } from "./process.js";
 import { compareVersions, validateVersion } from "./version.js";
-import type { ShipConfig, ShipSecrets } from "./config.js";
+import { validateInteractiveSessionMode, type ShipConfig, type ShipSecrets } from "./config.js";
 import { validateRuntimeProfile, validateRuntimeSecrets, type RuntimeProfile, type RuntimeSecrets } from "./runtime-profile.js";
 
 export async function runCli(argv: string[] = process.argv.slice(2)): Promise<void> {
@@ -31,6 +31,7 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
     case "deploy": await deployCommand(args); break;
     case "pi": await connectCommand(args); break;
     case "channel": await configureChannelCommand(args); break;
+    case "config": await configureServerCommand(args); break;
     case "update": await updateCommand(args); break;
     case "update-pi": await updatePiCommand(args); break;
     case "status": await statusCommand(args); break;
@@ -43,7 +44,7 @@ export async function deployCommand(args: string[]): Promise<void> {
   const options = parseOptions(args, [
     "--server", "--certificate", "--name", "--channel", "--default",
     "--telegram-bot-token", "--slack-bot-token", "--slack-app-token",
-    "--runtime-config", "--runtime-secrets",
+    "--runtime-config", "--runtime-secrets", "--session-mode",
   ], ["--default"]);
   const interactive = process.stdin.isTTY && process.stdout.isTTY && deployNeedsInput(options);
   const target = await selectedServer(options, "SSH server (user@host): ", false);
@@ -66,10 +67,13 @@ export async function deployCommand(args: string[]): Promise<void> {
   };
 
   const pairingCode = channel === "connect" ? undefined : randomBytes(5).toString("hex").toUpperCase();
+  const sessionMode = options.get("--session-mode") ?? "ephemeral";
+  validateInteractiveSessionMode(sessionMode);
   const config: ShipConfig = {
     name,
     workspace: "/var/lib/pi-ship/workspace",
     agentDir: "/var/lib/pi-ship/agent",
+    interactiveSessionMode: sessionMode,
   };
   const secrets: ShipSecrets = {};
   if (options.get("--runtime-config")) {
@@ -138,7 +142,7 @@ export async function deployCommand(args: string[]): Promise<void> {
     console.log(`  /pair ${pairingCode}`);
     console.log("\nAfter pairing, that Slack user can mention the app in channels or send direct messages.");
   } else {
-    console.log("\nPi will run only while you are connected. Start a one-off session with:");
+    console.log(`\nPi will run only while you are connected. Start a ${sessionMode === "persistent" ? "saved" : "one-off"} session with:`);
     console.log(madeDefault ? "  pi-ship pi" : `  pi-ship pi --server ${name}`);
   }
   console.log(madeDefault
@@ -178,6 +182,7 @@ export async function configureChannelCommand(args: string[]): Promise<void> {
     name: current.name,
     workspace: current.workspace,
     agentDir: current.agentDir,
+    interactiveSessionMode: current.interactiveSessionMode,
     runtime: current.runtime,
   };
   const secrets: ShipSecrets = {};
@@ -225,6 +230,34 @@ export async function configureChannelCommand(args: string[]): Promise<void> {
     console.log("\nSend this direct message to the bot:");
     console.log(`  /pair ${pairingCode}`);
   }
+}
+
+export async function configureServerCommand(args: string[]): Promise<void> {
+  const options = parseOptions(args, ["--server", "--certificate", "--session-mode"]);
+  const server = await selectedServer(options);
+  const connection = await resolveServer(server, certificateOption(options));
+  const currentText = await run("ssh", sshArgs(connection, "sudo -n cat /etc/pi-ship/config.json"), { capture: true });
+  const config = JSON.parse(currentText) as ShipConfig;
+  const currentMode = config.interactiveSessionMode ?? "ephemeral";
+  const sessionMode = await required(options, "--session-mode", "Interactive session mode", { defaultValue: currentMode });
+  validateInteractiveSessionMode(sessionMode);
+  config.interactiveSessionMode = sessionMode;
+
+  const temporary = await mkdtemp(join(tmpdir(), "pi-ship-config-"));
+  try {
+    const configFile = join(temporary, "config.json");
+    await writeFile(configFile, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+    const remoteDir = `/tmp/pi-ship-${randomBytes(6).toString("hex")}`;
+    await run("ssh", sshArgs(connection, `install -d -m 700 ${shellQuote(remoteDir)}`));
+    await run("scp", scpArgs(connection, configFile, join(packageRoot(), "scripts", "install.sh"), `${connection.target}:${remoteDir}/`));
+    const configure = `${remoteDir}/install.sh configure-session-mode ${remoteDir}/config.json`;
+    const elevate = `if [ \"$(id -u)\" = 0 ]; then bash ${configure}; else sudo -n bash ${configure}; fi`;
+    await run("ssh", sshArgs(connection, withRemoteCleanup(remoteDir, elevate)));
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+
+  console.log(`✓ Argument-free interactive sessions on ${server} are now ${sessionMode}.`);
 }
 
 export async function updateCommand(args: string[]): Promise<void> {
@@ -290,7 +323,7 @@ export async function statusCommand(args: string[]): Promise<void> {
   const options = parseOptions(args, ["--server", "--certificate"]);
   const server = await selectedServer(options);
   const connection = await resolveServer(server, certificateOption(options));
-  const remoteCommand = "printf 'Runtime version: '; cat /opt/pi-ship/version; printf 'Pi version: '; /opt/pi-ship/node/bin/node -p \"require('/opt/pi-ship/app/lib/node_modules/pi-ship/node_modules/@earendil-works/pi-coding-agent/package.json').version\" && if sudo -n systemctl is-enabled --quiet pi-ship.service; then printf 'Mode: communication provider (persistent)\\n'; sudo -n systemctl is-active pi-ship.service; sudo -n systemctl --no-pager --full status pi-ship.service | head -n 12; else printf 'Mode: connect (on demand)\\n'; fi";
+  const remoteCommand = "printf 'Runtime version: '; cat /opt/pi-ship/version; printf 'Pi version: '; /opt/pi-ship/node/bin/node -p \"require('/opt/pi-ship/app/lib/node_modules/pi-ship/node_modules/@earendil-works/pi-coding-agent/package.json').version\"; printf 'Interactive sessions: '; sudo -n /opt/pi-ship/node/bin/node -p \"require('/etc/pi-ship/config.json').interactiveSessionMode || 'ephemeral'\" && if sudo -n systemctl is-enabled --quiet pi-ship.service; then printf 'Mode: communication provider (persistent)\\n'; sudo -n systemctl is-active pi-ship.service; sudo -n systemctl --no-pager --full status pi-ship.service | head -n 12; else printf 'Mode: connect (on demand)\\n'; fi";
   const output = await run("ssh", sshArgs(connection, remoteCommand), { capture: true });
   process.stdout.write(output);
 }
@@ -314,6 +347,7 @@ Options:
   --certificate <path>              SSH identity file
   --default                         Make this the default server
   --channel <telegram|slack|none>   Configure persistent messaging (default: none)
+  --session-mode <mode>             Interactive sessions: ephemeral or persistent
   --telegram-bot-token <token>      Telegram bot token
   --slack-bot-token <token>         Slack bot token (xoxb-)
   --slack-app-token <token>         Slack Socket Mode token (xapp-)
@@ -334,6 +368,16 @@ Examples:
   pi-ship pi
   pi-ship pi --server production
   pi-ship pi --server production -- install npm:@foo/bar`,
+  config: `Change server-wide Pi Ship defaults without redeploying.
+
+Usage:
+  pi-ship config [--server <name-or-user@host>] [--certificate <path>]
+                 --session-mode <ephemeral|persistent>
+
+Options:
+  --server <name-or-user@host>              Server to configure
+  --certificate <path>                     SSH identity file
+  --session-mode <ephemeral|persistent>     Default for argument-free pi sessions`,
   channel: `Add, replace, reconfigure, or remove Telegram or Slack messaging.
 
 Omit --channel in a terminal to choose from an interactive menu. Selecting none
@@ -388,6 +432,7 @@ Commands:
   deploy      Install Pi Ship on a server over SSH
   pi          Open an interactive session or run the remote Pi CLI
   channel     Configure or disable Telegram or Slack messaging
+  config      Change server-wide interactive session defaults
   status      Show versions, operating mode, and service health
   logs        Follow logs from the persistent messaging service
   update      Update the Pi Ship runtime on a server

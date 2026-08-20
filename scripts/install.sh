@@ -129,6 +129,23 @@ install_pi_version() {
   fi
 }
 
+if [[ $MODE == configure-session-mode ]]; then
+  CONFIG=${2:?config is required}
+  [[ -x /opt/pi-ship/node/bin/node ]] || { echo "Pi Ship runtime is not installed" >&2; exit 1; }
+  [[ -f /etc/pi-ship/config.json ]] || { echo "Pi Ship is not configured" >&2; exit 1; }
+
+  /opt/pi-ship/node/bin/node -e '
+    const config = require(process.argv[1]);
+    if (config.interactiveSessionMode !== "ephemeral" && config.interactiveSessionMode !== "persistent") {
+      throw new Error("invalid interactive session mode");
+    }
+  ' "$CONFIG"
+  install -m 640 -o root -g pi-ship "$CONFIG" /etc/pi-ship/config.json.tmp
+  mv /etc/pi-ship/config.json.tmp /etc/pi-ship/config.json
+  echo "Interactive session mode updated"
+  exit 0
+fi
+
 if [[ $MODE == configure ]]; then
   CONFIG=${2:?config is required}
   SECRETS=${3:?secrets are required}

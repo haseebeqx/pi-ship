@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   PiRpc,
   configureChannel,
+  configureServer,
   connect,
   connectRpc,
   deploy,
@@ -10,13 +11,14 @@ import {
   status,
   update,
   updatePi,
+  defaultInteractivePiArgs,
   runtimePiArgs,
   validateRuntimeProfile,
   validateRuntimeSecrets,
 } from "../src/index.js";
 
 test("public library entry point is side-effect free and exports its API", () => {
-  for (const value of [PiRpc, configureChannel, connect, connectRpc, deploy, logs, status, update, updatePi]) {
+  for (const value of [PiRpc, configureChannel, configureServer, connect, connectRpc, deploy, logs, status, update, updatePi]) {
     assert.equal(typeof value, "function");
   }
 });
@@ -37,6 +39,13 @@ test("generic runtime profiles build Pi policy without mixing in secrets", () =>
   ]);
   assert.throws(() => validateRuntimeSecrets({ secretFiles: { "../token": "secret" } }), /filename/);
   assert.throws(() => validateRuntimeProfile({ readOnlyDirectories: ["relative"] }), /absolute/);
+});
+
+test("server session mode controls argument-free interactive persistence", () => {
+  const config = { name: "test", workspace: "/tmp", agentDir: "/tmp/agent" };
+  assert.deepEqual(defaultInteractivePiArgs(config), ["--no-session", "--approve"]);
+  assert.deepEqual(defaultInteractivePiArgs({ ...config, interactiveSessionMode: "ephemeral" }), ["--no-session", "--approve"]);
+  assert.deepEqual(defaultInteractivePiArgs({ ...config, interactiveSessionMode: "persistent" }), ["--approve"]);
 });
 
 test("PiRpc rejects commands before it is started", async () => {

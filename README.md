@@ -11,7 +11,7 @@ Direct sessions stream Pi's interactive terminal over SSH and stop when you disc
 - **One-command remote deployment** — install Pi, Node.js, configuration, and service management without configuring the server by hand.
 - **No exposed service** — Telegram long polling and Slack Socket Mode require no public ports, webhooks, TLS certificates, or reverse proxies.
 - **Direct Pi access** — open Pi's full interactive terminal over SSH with `npx pi-ship pi`.
-- **On demand or always available** — use ephemeral terminal sessions or a persistent agent through a messaging channel.
+- **On demand or always available** — choose ephemeral or saved terminal sessions, or run a persistent agent through a messaging channel.
 - **Native messaging** — streaming responses, message continuation, Markdown adaptation, attachments, reactions, and live tool status.
 - **Stock Pi experience** — use Pi's normal providers, authentication, models, sessions, tools, and trusted plugins.
 - **Private by default** — an unprivileged user, one-time DM pairing, sender allowlists, protected credentials, and no root agent process.
@@ -37,6 +37,8 @@ Then open Pi on the default server:
 ```bash
 npx pi-ship pi
 ```
+
+Interactive sessions are ephemeral by default. Set a server-wide saved-session default with `npx pi-ship config --session-mode persistent`.
 
 Use Pi's `/login` command to authenticate a model provider, then select a model with `/model` or <kbd>Ctrl</kbd>+<kbd>L</kbd>.
 
