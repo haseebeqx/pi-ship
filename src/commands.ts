@@ -14,6 +14,19 @@ import { validateRuntimeProfile, validateRuntimeSecrets, type RuntimeProfile, ty
 
 export async function runCli(argv: string[] = process.argv.slice(2)): Promise<void> {
   const [command = "help", ...args] = argv;
+  if (command === "help") {
+    printHelp(args[0]);
+    return;
+  }
+  if (command === "--help" || command === "-h") {
+    printHelp();
+    return;
+  }
+  if (args[0] === "--help" || args[0] === "-h") {
+    printHelp(command);
+    return;
+  }
+
   switch (command) {
     case "deploy": await deployCommand(args); break;
     case "pi": await connectCommand(args); break;
@@ -22,9 +35,6 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
     case "update-pi": await updatePiCommand(args); break;
     case "status": await statusCommand(args); break;
     case "logs": await logsCommand(args); break;
-    case "help":
-    case "--help":
-    case "-h": printHelp(); break;
     default: throw new Error(`Unknown command: ${command}`);
   }
 }
@@ -292,35 +302,104 @@ export async function logsCommand(args: string[]): Promise<void> {
   await run("ssh", sshArgs(connection, "-t", "sudo -n journalctl -u pi-ship.service -n 100 -f"));
 }
 
-function printHelp(): void {
-  console.log(`pi-ship
+const commandHelp: Record<string, string> = {
+  deploy: `Install Pi Ship on a Linux server over SSH and save the server locally.
 
-  deploy --server <user@host> --name <name> [--default]
-         [--channel <telegram|slack|none> [channel credentials]] [--certificate <path>]
-         [--runtime-config <json>] [--runtime-secrets <json>]
-  pi      [--server <name-or-user@host>] [--certificate <path>] [-- <pi-args...>]
-  channel [--server <name-or-user@host>] [--channel <telegram|slack|none>]
-          [channel credentials] [--certificate <path>]
-  update    [--server <name-or-user@host>] [--certificate <path>]
-  update-pi [--server <name-or-user@host>] [--certificate <path>] [--version <semver>]
-  status    [--server <name-or-user@host>] [--certificate <path>]
-  logs      [--server <name-or-user@host>] [--certificate <path>]
+Usage:
+  pi-ship deploy [options]
 
-Deploy channel credentials:
-  Telegram: --telegram-bot-token <token>
-  Slack:    --slack-bot-token <token> --slack-app-token <token>
+Options:
+  --server <user@host>              SSH destination (prompted if omitted)
+  --name <name>                     Local name for this server (default: my-pi)
+  --certificate <path>              SSH identity file
+  --default                         Make this the default server
+  --channel <telegram|slack|none>   Configure persistent messaging (default: none)
+  --telegram-bot-token <token>      Telegram bot token
+  --slack-bot-token <token>         Slack bot token (xoxb-)
+  --slack-app-token <token>         Slack Socket Mode token (xapp-)
+  --runtime-config <json-file>      Runtime profile JSON
+  --runtime-secrets <json-file>     Runtime secrets JSON
 
-Without --channel, Pi runs only for one-off sessions opened by pi.
-Run channel interactively to add, replace, reconfigure, or remove a messaging provider.
-Arguments after -- are passed directly to Pi; for example: pi-ship pi --server my-pi -- install npm:@foo/bar
-Missing required options are prompted for when running in a terminal. For remote
-commands, an omitted --server uses PI_SHIP_SERVER and then the saved default.
-The first deployed server becomes the default; --default replaces it.
-Authenticate model providers from Pi with /login. Channel credentials may also
-be supplied through PI_SHIP_TELEGRAM_TOKEN, PI_SHIP_SLACK_BOT_TOKEN, and
-PI_SHIP_SLACK_APP_TOKEN.
-The certificate is used as the SSH identity file. A certificate supplied during
-deploy is saved with the named server for later pi, update, update-pi, status, and logs calls.`);
+Example:
+  pi-ship deploy --server ubuntu@example.com --name production --default`,
+  pi: `Open Pi on a deployed server over SSH.
+
+With no Pi arguments, this opens an interactive, on-demand terminal session.
+Arguments after Pi Ship options (or after --) are passed to the remote Pi CLI.
+
+Usage:
+  pi-ship pi [--server <name-or-user@host>] [--certificate <path>] [-- <pi-args...>]
+
+Examples:
+  pi-ship pi
+  pi-ship pi --server production
+  pi-ship pi --server production -- install npm:@foo/bar`,
+  channel: `Add, replace, reconfigure, or remove Telegram or Slack messaging.
+
+Omit --channel in a terminal to choose from an interactive menu. Selecting none
+stops the persistent service; Pi remains available through pi-ship pi.
+
+Usage:
+  pi-ship channel [options]
+
+Options:
+  --server <name-or-user@host>       Server to configure
+  --certificate <path>              SSH identity file
+  --channel <telegram|slack|none>    Messaging provider or none to disable it
+  --telegram-bot-token <token>       Telegram bot token
+  --slack-bot-token <token>          Slack bot token (xoxb-)
+  --slack-app-token <token>          Slack Socket Mode token (xapp-)`,
+  update: `Update Pi Ship on a server when the locally installed package is newer.
+Configuration, credentials, workspace data, and Pi are preserved.
+
+Usage:
+  pi-ship update [--server <name-or-user@host>] [--certificate <path>]`,
+  "update-pi": `Update the Pi coding agent without updating Pi Ship.
+The latest npm release is used unless --version is supplied.
+
+Usage:
+  pi-ship update-pi [--server <name-or-user@host>] [--certificate <path>]
+                    [--version <semver>]`,
+  status: `Show the installed Pi Ship and Pi versions, operating mode, and service status.
+
+Usage:
+  pi-ship status [--server <name-or-user@host>] [--certificate <path>]`,
+  logs: `Follow the persistent messaging service log, starting with its latest 100 entries.
+This is useful for diagnosing Telegram, Slack, or startup problems.
+
+Usage:
+  pi-ship logs [--server <name-or-user@host>] [--certificate <path>]`,
+};
+
+function printHelp(command?: string): void {
+  if (command) {
+    const help = commandHelp[command];
+    if (!help) throw new Error(`Unknown command: ${command}`);
+    console.log(`${command} — ${help}`);
+    return;
+  }
+
+  console.log(`pi-ship — Deploy and manage Pi on a remote server
+
+Usage:
+  pi-ship <command> [options]
+
+Commands:
+  deploy      Install Pi Ship on a server over SSH
+  pi          Open an interactive session or run the remote Pi CLI
+  channel     Configure or disable Telegram or Slack messaging
+  status      Show versions, operating mode, and service health
+  logs        Follow logs from the persistent messaging service
+  update      Update the Pi Ship runtime on a server
+  update-pi   Update the Pi coding agent separately
+  help        Show help for a command
+
+Getting started:
+  pi-ship deploy
+  pi-ship pi
+
+Run pi-ship help <command> (or pi-ship <command> --help) for usage and options.
+When --server is omitted, commands use PI_SHIP_SERVER and then the saved default.`);
 }
 
 function packageRoot(): string {
