@@ -1,6 +1,6 @@
 {
   "name": "pi-ship",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Deploy Pi to a remote server for secure terminal, Telegram, or Slack access",
   "homepage": "https://github.com/haseebeqx/pi-ship#readme",
   "bugs": {
