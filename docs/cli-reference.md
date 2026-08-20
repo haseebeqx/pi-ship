@@ -9,6 +9,8 @@ Use `npx pi-ship <command>`. If installed globally, replace `npx pi-ship` with `
 | Command | Purpose | Usage |
 | --- | --- | --- |
 | `deploy` | Install Pi Ship on a server and save the server locally | `npx pi-ship deploy --server <user@host> --name <name> [--default] [options]` |
+| `list` | List locally saved servers | `npx pi-ship list` |
+| `remove` | Remove a saved server, optionally uninstalling Pi Ship remotely | `npx pi-ship remove [--server <saved-name>] [--uninstall]` |
 | `pi` | Open an on-demand Pi session or invoke the remote Pi CLI | `npx pi-ship pi [--server <name-or-user@host>] [--certificate <path>] [--cwd <absolute-server-path>] [-- <pi-args...>]` |
 | `channel` | Add, replace, reconfigure, or remove a messaging provider | `npx pi-ship channel [--server <name-or-user@host>] [options]` |
 | `config` | Change server-wide defaults | `npx pi-ship config [--server <name-or-user@host>] --session-mode <ephemeral|persistent>` |
@@ -33,6 +35,9 @@ Use `npx pi-ship <command>`. If installed globally, replace `npx pi-ship` with `
 | `deploy` | `--slack-app-token` | `<xapp-token>` | For Slack | Slack Socket Mode app token. Falls back to `PI_SHIP_SLACK_APP_TOKEN`. |
 | `deploy` | `--runtime-config` | `<json-file>` | No | Generic non-secret `RuntimeProfile` JSON. Prefer the typed `deploy()` API. |
 | `deploy` | `--runtime-secrets` | `<json-file>` | No | Generic `RuntimeSecrets` JSON; only the path, never its contents, is placed on the command line. |
+| `remove` | `--server` | `<saved-name>` | No | Saved server to remove. Falls back to `PI_SHIP_SERVER`, then the default. Direct unsaved SSH targets are rejected. |
+| `remove` | `--certificate` | `<path>` | No | Override the saved SSH identity file when using `--uninstall`. |
+| `remove` | `--uninstall` | — | No | Before removing the local entry, stop Pi Ship and permanently delete its runtime, configuration, credentials, workspace, agent state, and system user remotely. |
 | `pi` | `--server` | `<name-or-user@host>` | No | A saved server name or direct SSH destination. Falls back to `PI_SHIP_SERVER`, then the default. |
 | `pi` | `--certificate` | `<path>` | No | Override the saved SSH identity file. |
 | `pi` | `--cwd` | `<absolute-server-path>` | No | Run Pi in this project directory on the server instead of the default workspace. The `pi-ship` server user must be able to access it. |
@@ -59,6 +64,10 @@ Use `npx pi-ship <command>`. If installed globally, replace `npx pi-ship` with `
 Missing required values are requested when running in an interactive terminal. In non-interactive environments, supply them as options or, for credentials, through the listed environment variables. Options cannot be repeated.
 
 ## Command behavior
+
+`list` marks the current default with `*` and displays each saved name, SSH target, and identity file.
+
+`remove` only deletes the local saved connection by default; the remote installation remains available. With `--uninstall`, remote removal must succeed before the local entry is deleted. Uninstalling is destructive and removes all Pi Ship-owned data under `/etc/pi-ship`, `/opt/pi-ship`, and `/var/lib/pi-ship`.
 
 `channel` shows an interactive menu for adding, replacing, reconfiguring, or removing Telegram and Slack. Reconfiguring resets the sender allowlist and prints a new one-time pairing code. To automate it, pass `--channel telegram`, `--channel slack`, or `--channel none` together with the applicable credentials. Provider changes are applied atomically; if the new persistent provider cannot start, Pi Ship restores the previous configuration and service.
 

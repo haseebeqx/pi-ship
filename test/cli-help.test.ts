@@ -19,6 +19,8 @@ test("general help explains what each command does", async () => {
 
   for (const description of [
     "deploy      Install Pi Ship on a server over SSH",
+    "list        List saved servers",
+    "remove      Remove a saved server, optionally uninstalling it remotely",
     "pi          Open an interactive session or run the remote Pi CLI",
     "channel     Configure or disable Telegram or Slack messaging",
     "config      Change server-wide interactive session defaults",
@@ -39,6 +41,14 @@ test("command help shows purpose, usage, and relevant options", async () => {
   assert.match(output, /Usage:\n  pi-ship deploy \[options\]/);
   assert.match(output, /--channel <telegram\|slack\|none>/);
   assert.match(output, /--session-mode <mode>/);
+});
+
+test("remove help documents local removal and remote uninstall", async () => {
+  const output = await captureHelp(["remove", "--help"]);
+
+  assert.match(output, /--server <saved-name>/);
+  assert.match(output, /--uninstall/);
+  assert.match(output, /permanently delete its runtime/);
 });
 
 test("pi help documents the remote working directory", async () => {

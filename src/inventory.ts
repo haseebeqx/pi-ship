@@ -7,6 +7,11 @@ export interface ServerConnection {
   certificate?: string;
 }
 
+export interface SavedServer extends ServerConnection {
+  name: string;
+  isDefault: boolean;
+}
+
 type Inventory = Record<string, ServerConnection>;
 
 interface InventoryConfig {
@@ -59,6 +64,40 @@ export async function saveServer(
     return true;
   }
   return false;
+}
+
+/** List saved servers in insertion order. */
+export async function listServers(): Promise<SavedServer[]> {
+  const [inventory, config] = await Promise.all([readInventory(), readConfig()]);
+  return Object.entries(inventory).map(([name, connection]) => ({
+    name,
+    ...connection,
+    isDefault: config.defaultServer === name,
+  }));
+}
+
+/** Return a saved connection by name without treating the name as an SSH target. */
+export async function savedServer(name: string): Promise<ServerConnection | undefined> {
+  return (await readInventory())[name];
+}
+
+/** Remove a saved server and select another default when necessary. */
+export async function removeServer(name: string): Promise<ServerConnection | undefined> {
+  const [inventory, config] = await Promise.all([readInventory(), readConfig()]);
+  const removed = inventory[name];
+  if (!removed) return undefined;
+
+  delete inventory[name];
+  await writeJson(inventoryPath, inventory);
+
+  if (!config.defaultServer || config.defaultServer === name || !inventory[config.defaultServer]) {
+    const [nextDefault] = Object.keys(inventory);
+    const updated = { ...config };
+    if (nextDefault) updated.defaultServer = nextDefault;
+    else delete updated.defaultServer;
+    await writeJson(configPath, updated);
+  }
+  return removed;
 }
 
 /** Return the environment-selected server, then the saved default server. */

@@ -12,7 +12,7 @@ test("servers select an automatic or explicit default and honor PI_SHIP_SERVER",
   delete process.env.PI_SHIP_SERVER;
 
   try {
-    const { impliedServer, resolveServer, saveServer } = await import("../src/inventory.js");
+    const { impliedServer, listServers, removeServer, resolveServer, savedServer, saveServer } = await import("../src/inventory.js");
 
     assert.equal(await saveServer("first", { target: "one.example" }), true);
     assert.equal(await impliedServer(), "first");
@@ -32,6 +32,18 @@ test("servers select an automatic or explicit default and honor PI_SHIP_SERVER",
     assert.equal(await impliedServer(), "first");
     assert.deepEqual(await resolveServer(), { target: "one.example", certificate: undefined });
     assert.deepEqual(await resolveServer("second"), { target: "two.example", certificate: undefined });
+    assert.deepEqual(await savedServer("second"), { target: "two.example" });
+    assert.deepEqual(await listServers(), [
+      { name: "first", target: "one.example", isDefault: false },
+      { name: "second", target: "two.example", isDefault: true },
+    ]);
+
+    assert.deepEqual(await removeServer("second"), { target: "two.example" });
+    assert.equal(await impliedServer(), "first");
+    assert.deepEqual(await listServers(), [
+      { name: "first", target: "one.example", isDefault: true },
+    ]);
+    assert.equal(await removeServer("missing"), undefined);
   } finally {
     if (previousHome === undefined) delete process.env.HOME;
     else process.env.HOME = previousHome;

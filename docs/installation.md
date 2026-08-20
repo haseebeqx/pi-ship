@@ -85,6 +85,24 @@ For any remote command, server selection uses this precedence:
 2. `PI_SHIP_SERVER`
 3. The saved default
 
+List locally saved servers with:
+
+```bash
+npx pi-ship list
+```
+
+Remove a saved connection without changing the remote installation:
+
+```bash
+npx pi-ship remove --server my-pi
+```
+
+To also uninstall Pi Ship and permanently delete its remote configuration, credentials, workspace, agent state, and system user, pass `--uninstall`:
+
+```bash
+npx pi-ship remove --server my-pi --uninstall
+```
+
 Bot tokens can be supplied through `PI_SHIP_TELEGRAM_TOKEN`, `PI_SHIP_SLACK_BOT_TOKEN`, and `PI_SHIP_SLACK_APP_TOKEN`. Secrets passed directly on the command line may be visible to other local processes while the command runs.
 
 See the [CLI reference](cli-reference.md) for every command and option.

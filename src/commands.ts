@@ -5,7 +5,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createInterface, emitKeypressEvents } from "node:readline";
 import { hashPairingCode } from "./pairing.js";
-import { impliedServer, resolveServer, saveServer } from "./inventory.js";
+import { impliedServer, listServers, removeServer, resolveServer, savedServer, saveServer } from "./inventory.js";
 import type { ServerConnection } from "./inventory.js";
 import { run, shellQuote } from "./process.js";
 import { compareVersions, validateVersion } from "./version.js";
@@ -29,6 +29,8 @@ export async function runCli(argv: string[] = process.argv.slice(2)): Promise<vo
 
   switch (command) {
     case "deploy": await deployCommand(args); break;
+    case "list": await listServersCommand(args); break;
+    case "remove": await removeServerCommand(args); break;
     case "pi": await connectCommand(args); break;
     case "channel": await configureChannelCommand(args); break;
     case "config": await configureServerCommand(args); break;
@@ -148,6 +150,43 @@ export async function deployCommand(args: string[]): Promise<void> {
   console.log(madeDefault
     ? "\nCheck it later with: pi-ship status"
     : `\nCheck it later with: pi-ship status --server ${name}`);
+}
+
+export async function listServersCommand(args: string[]): Promise<void> {
+  parseOptions(args, []);
+  const servers = await listServers();
+  if (servers.length === 0) {
+    console.log("No saved servers.");
+    return;
+  }
+
+  console.log("DEFAULT\tNAME\tTARGET\tCERTIFICATE");
+  for (const server of servers) {
+    console.log(`${server.isDefault ? "*" : ""}\t${server.name}\t${server.target}\t${server.certificate ?? "-"}`);
+  }
+}
+
+export async function removeServerCommand(args: string[]): Promise<void> {
+  const options = parseOptions(args, ["--server", "--certificate", "--uninstall"], ["--uninstall"]);
+  const name = await selectedServer(options);
+  const saved = await savedServer(name);
+  if (!saved) throw new Error(`Saved server not found: ${name}`);
+
+  if (options.has("--uninstall")) {
+    const connection: ServerConnection = {
+      target: saved.target,
+      certificate: certificateOption(options) ?? saved.certificate,
+    };
+    console.log(`Uninstalling Pi Ship from ${name}...`);
+    const installer = await readFile(join(packageRoot(), "scripts", "install.sh"), "utf8");
+    const uninstall = "if [ \"$(id -u)\" = 0 ]; then bash -s -- uninstall; else sudo -n bash -s -- uninstall; fi";
+    await run("ssh", sshArgs(connection, uninstall), { input: installer });
+  }
+
+  await removeServer(name);
+  console.log(options.has("--uninstall")
+    ? `✓ Pi Ship was uninstalled and ${name} was removed from saved servers.`
+    : `✓ ${name} was removed from saved servers. The remote installation was not changed.`);
 }
 
 export async function connectCommand(args: string[]): Promise<void> {
@@ -361,6 +400,21 @@ Options:
 
 Example:
   pi-ship deploy --server ubuntu@example.com --name production --default`,
+  list: `List locally saved servers.
+
+Usage:
+  pi-ship list`,
+  remove: `Remove a server from the local saved-server inventory.
+Use --uninstall to also stop Pi Ship and permanently delete its runtime,
+configuration, credentials, workspace, agent state, and system user remotely.
+
+Usage:
+  pi-ship remove [--server <saved-name>] [--certificate <path>] [--uninstall]
+
+Options:
+  --server <saved-name>              Saved server to remove (defaults to the selected server)
+  --certificate <path>              Override its saved SSH identity file
+  --uninstall                        Also uninstall Pi Ship and its data from the server`,
   pi: `Open Pi on a deployed server over SSH.
 
 With no Pi arguments, this opens an interactive, on-demand terminal session.
@@ -442,6 +496,8 @@ Usage:
 
 Commands:
   deploy      Install Pi Ship on a server over SSH
+  list        List saved servers
+  remove      Remove a saved server, optionally uninstalling it remotely
   pi          Open an interactive session or run the remote Pi CLI
   channel     Configure or disable Telegram or Slack messaging
   config      Change server-wide interactive session defaults

@@ -46,6 +46,8 @@ npx pi-ship pi --cwd /srv/my-project
 
 Interactive sessions are ephemeral by default. Set a server-wide saved-session default with `npx pi-ship config --session-mode persistent`.
 
+Use `npx pi-ship list` to list saved servers and `npx pi-ship remove --server <name>` to forget one locally. Add `--uninstall` to the remove command to also permanently delete Pi Ship and its data from that server.
+
 Use Pi's `/login` command to authenticate a model provider, then select a model with `/model` or <kbd>Ctrl</kbd>+<kbd>L</kbd>.
 
 See [Installation](docs/installation.md) for non-interactive deployment, SSH credentials, server selection, and messaging setup.

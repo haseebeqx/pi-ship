@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-MODE=${1:?install or update is required}
+MODE=${1:?install, update, configure, or uninstall mode is required}
 NODE_VERSION=v22.22.0
 
 if [[ $(id -u) -ne 0 ]]; then
@@ -92,6 +92,26 @@ NODE
   chown root:pi-ship /etc/pi-ship/runtime-config.json /etc/pi-ship/secrets.d/* 2>/dev/null || true
   chmod 640 /etc/pi-ship/runtime-config.json /etc/pi-ship/secrets.d/* 2>/dev/null || true
 }
+
+if [[ $MODE == uninstall ]]; then
+  systemctl disable --now pi-ship.service >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/pi-ship.service
+  rm -rf /etc/systemd/system/pi-ship.service.d
+  systemctl daemon-reload
+  systemctl reset-failed pi-ship.service >/dev/null 2>&1 || true
+
+  if id pi-ship >/dev/null 2>&1; then
+    if command -v pkill >/dev/null 2>&1; then
+      pkill -TERM -u pi-ship >/dev/null 2>&1 || true
+      sleep 1
+      pkill -KILL -u pi-ship >/dev/null 2>&1 || true
+    fi
+    userdel pi-ship
+  fi
+  rm -rf /etc/pi-ship /opt/pi-ship /var/lib/pi-ship
+  echo "Pi Ship uninstalled successfully"
+  exit 0
+fi
 
 migrate_service_readiness() {
   local unit=/etc/systemd/system/pi-ship.service
@@ -359,7 +379,7 @@ if [[ $MODE == update ]]; then
 fi
 
 if [[ $MODE != install ]]; then
-  echo "usage: install.sh install <archive> <config> <secrets> <version> | configure <config> <secrets> | update <archive> <version> <expected-version> | update-pi <version> <expected-version>" >&2
+  echo "usage: install.sh install <archive> <config> <secrets> <version> | configure <config> <secrets> | update <archive> <version> <expected-version> | update-pi <version> <expected-version> | uninstall" >&2
   exit 1
 fi
 
