@@ -33,7 +33,14 @@ npm version patch # or minor / major
 npm run verify
 git push origin main --follow-tags
 VERSION=$(node -p "require('./package.json').version")
-gh release create "v$VERSION" --verify-tag --generate-notes
+awk -v version="$VERSION" '
+  $0 ~ "^## \\[" version "\\]" { found = 1; next }
+  found && /^## \[/ { exit }
+  found { print }
+' CHANGELOG.md > /tmp/pi-ship-release-notes.md
+gh release create "v$VERSION" --verify-tag --notes-file /tmp/pi-ship-release-notes.md
 ```
+
+Use the matching `CHANGELOG.md` section as the release body rather than generated commit links. This gives people and automated tools structured `Added`, `Changed`, `Fixed`, and other release details directly in GitHub's release metadata.
 
 Publishing the GitHub Release triggers `.github/workflows/publish.yml`. The workflow rejects a release whose tag does not exactly match `v<package version>`, runs the package lifecycle checks, and publishes to npm with provenance. CI independently verifies pull requests and pushes on Node.js 22.19.0 and Node.js 24.x.
